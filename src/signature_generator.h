@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include "fft/fft_interface.h"
+#include "audio_debugger.h"
 
 namespace afp {
 
@@ -22,6 +23,13 @@ struct ConstellationPoint {
     uint32_t amplitude;     // 振幅
 };
 
+// 定义峰值结构，用于跨帧存储
+struct Peak {
+    uint32_t frequency;   // 频率 (Hz)
+    float magnitude;      // 幅度
+    double timestamp;     // 时间戳 (秒)
+};
+
 class SignatureGenerator {
 public:
     SignatureGenerator();
@@ -39,26 +47,23 @@ public:
 
     // 获取生成的指纹
     std::vector<SignaturePoint> signature() const;
+    
+    // 重置所有已生成的签名
+    // 在开始新的音频流时调用
+    void resetSignatures();
 
 private:
-    // 计算单个时间点的指纹
-    SignaturePoint computeSignaturePoint(const float* buffer, 
-                                       size_t bufferSize,
-                                       double timestamp);
-                                     
-    // 生成星座图哈希值
-    std::vector<ConstellationPoint> generateConstellationHashes(
-        const std::vector<float>& magnitudes,
-        const std::vector<float>& frequencies,
-        double timestamp);
-
-    // 计算峰值对
-    std::vector<std::pair<uint32_t, uint32_t>> findPeakPairs(
-        const std::vector<float>& magnitudes,
-        const std::vector<float>& frequencies);
-
     // 计算hash值
     uint32_t computeHash(uint32_t f1, uint32_t f2, uint32_t t);
+    
+    // 从音频帧中提取峰值
+    std::vector<Peak> extractPeaks(const float* buffer, double timestamp);
+    
+    // 从峰值生成指纹
+    std::vector<SignaturePoint> generateSignaturesFromPeaks(
+        const std::vector<Peak>& currentPeaks, 
+        const std::vector<Peak>& historyPeaks,
+        double currentTimestamp);
 
 private:
     std::unique_ptr<FFTInterface> fft_;
@@ -71,6 +76,10 @@ private:
     std::vector<float> window_;
     std::vector<float> buffer_;
     std::vector<std::complex<float>> fftBuffer_;
+    
+    // 存储历史峰值的缓冲区，用于跨帧生成指纹
+    std::vector<Peak> peakHistory_;
+    static const size_t MAX_PEAK_HISTORY = 20; // 保存最近20帧的峰值
 };
 
 } // namespace afp 

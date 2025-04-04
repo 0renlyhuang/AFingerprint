@@ -17,8 +17,8 @@ void printSignature(const std::vector<afp::SignaturePoint>& signature, const std
     std::cout << "  - 指纹点数量: " << signature.size() << std::endl;
     
     if (!signature.empty()) {
-        std::cout << "  - 前10个指纹点:" << std::endl;
-        for (size_t i = 0; i < std::min(size_t(10), signature.size()); ++i) {
+        std::cout << "  - 前100个指纹点:" << std::endl;
+        for (size_t i = 0; i < std::min(size_t(100), signature.size()); ++i) {
             std::cout << "    [" << i << "] Hash: 0x" 
                      << std::hex << std::setw(8) << std::setfill('0') << signature[i].hash
                      << std::dec << ", Timestamp: " << signature[i].timestamp << std::endl;

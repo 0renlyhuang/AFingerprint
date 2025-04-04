@@ -1,4 +1,5 @@
 #include "matcher.h"
+#include "audio_debugger.h"
 #include <algorithm>
 #include <unordered_map>
 #include <iostream>
@@ -25,17 +26,7 @@ bool Matcher::appendStreamBuffer(const float* buffer,
     // 打印匹配过程中生成的查询指纹
     const auto& querySignature = generator_->signature();
     std::cout << "匹配过程中生成的查询指纹:" << std::endl;
-    std::cout << "  - 指纹点数量: " << querySignature.size() << std::endl;
-    
-    if (!querySignature.empty()) {
-        std::cout << "  - 前10个指纹点:" << std::endl;
-        for (size_t i = 0; i < std::min(size_t(10), querySignature.size()); ++i) {
-            std::cout << "    [" << i << "] Hash: 0x" 
-                     << std::hex << std::setw(8) << std::setfill('0') << querySignature[i].hash
-                     << std::dec << ", Timestamp: " << querySignature[i].timestamp << std::endl;
-        }
-    }
-    std::cout << std::endl;
+    AudioDebugger::printSignatureDetails(querySignature);
 
     performMatching();
     return true;
@@ -49,26 +40,20 @@ void Matcher::performMatching() {
 
     bool anyMatchFound = false;
     std::cout << "开始匹配过程，查询指纹点数量: " << querySignature.size() << std::endl;
+    AudioDebugger::printQuerySignatureStats(querySignature);
 
-    // 调试输出：计算指纹中的唯一哈希值
+    // 计算指纹中的唯一哈希值
     std::unordered_set<uint32_t> uniqueQueryHashes;
     for (const auto& point : querySignature) {
         uniqueQueryHashes.insert(point.hash);
     }
-    std::cout << "查询指纹中唯一哈希值数量: " << uniqueQueryHashes.size() << std::endl;
 
     for (size_t i = 0; i < catalog_.signatures().size(); ++i) {
         const auto& targetSignature = catalog_.signatures()[i];
         const auto& mediaItem = catalog_.mediaItems()[i];
 
-        // 调试输出：计算目标指纹中的唯一哈希值
-        std::unordered_set<uint32_t> uniqueTargetHashes;
-        for (const auto& point : targetSignature) {
-            uniqueTargetHashes.insert(point.hash);
-        }
-
-        std::cout << "比较与 '" << mediaItem.title() << "' 的指纹 (目标指纹点数量: " << targetSignature.size() 
-                  << ", 唯一哈希值: " << uniqueTargetHashes.size() << ")" << std::endl;
+        // 使用AudioDebugger打印目标指纹统计信息
+        AudioDebugger::printTargetSignatureStats(targetSignature, mediaItem.title(), i);
         
         // 检查数据库指纹是否完整
         if (targetSignature.empty()) {
@@ -76,23 +61,14 @@ void Matcher::performMatching() {
             continue;
         }
 
-        // 检查指纹哈希是否有交集
-        std::unordered_set<uint32_t> commonHashes;
-        for (const auto& hash : uniqueQueryHashes) {
-            if (uniqueTargetHashes.count(hash) > 0) {
-                commonHashes.insert(hash);
-            }
+        // 计算目标指纹中的唯一哈希值
+        std::unordered_set<uint32_t> uniqueTargetHashes;
+        for (const auto& point : targetSignature) {
+            uniqueTargetHashes.insert(point.hash);
         }
-        std::cout << "  共同哈希值数量: " << commonHashes.size() << std::endl;
-        
-        // 如果有共同哈希，输出它们
-        if (!commonHashes.empty() && commonHashes.size() <= 10) {
-            std::cout << "  共同哈希值: ";
-            for (const auto& hash : commonHashes) {
-                std::cout << "0x" << std::hex << hash << std::dec << " ";
-            }
-            std::cout << std::endl;
-        }
+
+        // 使用AudioDebugger打印哈希交集信息
+        AudioDebugger::printCommonHashesInfo(uniqueQueryHashes, uniqueTargetHashes);
         
         // 比较哈希值
         size_t hashMatches = 0;
@@ -101,7 +77,7 @@ void Matcher::performMatching() {
                 if (queryPoint.hash == targetPoint.hash) {
                     hashMatches++;
                     // 只打印前几个匹配的详细信息
-                    if (hashMatches <= 5) {
+                    if (hashMatches <= 100) {
                         std::cout << "  哈希匹配: 0x" << std::hex << queryPoint.hash << std::dec 
                                 << " (查询时间: " << queryPoint.timestamp 
                                 << "s, 目标时间: " << targetPoint.timestamp << "s)" << std::endl;
@@ -184,13 +160,9 @@ double Matcher::computeSimilarity(const std::vector<SignaturePoint>& query,
     // 计算置信度时考虑到查询和目标的相对大小
     double confidence = static_cast<double>(maxCount) / std::min(query.size(), target.size());
     
-    // 调试输出
-    std::cout << "Debug: Total matches: " << totalMatches
-              << ", Best offset: " << bestOffset
-              << ", Max count: " << maxCount
-              << ", Confidence: " << confidence
-              << ", Query size: " << query.size()
-              << ", Target size: " << target.size() << std::endl;
+    // 使用AudioDebugger打印相似度计算的详细信息
+    AudioDebugger::printSimilarityDebugInfo(totalMatches, bestOffset, maxCount, confidence, 
+                                         query.size(), target.size());
     
     return confidence;
 }

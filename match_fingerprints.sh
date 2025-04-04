@@ -1,1 +1,1 @@
-./build/Debug/AFingerprint match shazam fingerprints.db test_pcm/v_s_1.pcm
+./build/AFingerprint match shazam fingerprints.db test_pcm/v_s_1.pcm
