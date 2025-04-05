@@ -1,5 +1,5 @@
-#include "audio_debugger.h"
-#include "signature_generator.h"
+#include "debugger/audio_debugger.h"
+#include "signature/signature_generator.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>

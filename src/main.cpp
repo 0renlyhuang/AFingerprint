@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 #include <iomanip>
-#include "signature_generator.h"
+#include "signature/signature_generator.h"
 #include "catalog.h"
 #include "matcher.h"
 #include "media_item.h"

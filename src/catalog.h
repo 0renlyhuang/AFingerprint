@@ -3,7 +3,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
-#include "signature_generator.h"
+#include "signature/signature_generator.h"
 #include "media_item.h"
 
 namespace afp {

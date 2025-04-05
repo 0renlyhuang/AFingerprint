@@ -35,6 +35,10 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 file(GLOB_RECURSE SOURCE_FILES 
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/signature/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/signature/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/*.h"
 )
 list(FILTER SOURCE_FILES EXCLUDE REGEX ".*src/fft/.*")
 

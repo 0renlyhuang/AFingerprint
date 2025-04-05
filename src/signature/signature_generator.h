@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 #include "fft/fft_interface.h"
-#include "audio_debugger.h"
+#include "debugger/audio_debugger.h"
 
 namespace afp {
 

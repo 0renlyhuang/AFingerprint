@@ -1,9 +1,10 @@
 #pragma once
 #include <functional>
 #include <memory>
-#include "signature_generator.h"
+#include "signature/signature_generator.h"
 #include "catalog.h"
 #include "media_item.h"
+#include "signature/signature_matcher.h"
 
 namespace afp {
 
@@ -12,6 +13,7 @@ struct MatchResult {
     double offset;           // 时间偏移（秒）
     double confidence;       // 匹配置信度
     std::vector<SignaturePoint> matchedPoints;  // 匹配的点
+    size_t id;               // 唯一标识符
 };
 
 class Matcher {
@@ -29,25 +31,14 @@ public:
     // 设置匹配回调
     void setMatchCallback(MatchCallback callback) {
         matchCallback_ = callback;
+        signatureMatcher_->setMatchNotifyCallback(callback);
     }
-
-private:
-    // 执行匹配
-    void performMatching();
-
-    // 计算两个指纹序列的相似度
-    double computeSimilarity(const std::vector<SignaturePoint>& query,
-                           const std::vector<SignaturePoint>& target,
-                           double& offset);
 
 private:
     const Catalog& catalog_;
     std::unique_ptr<SignatureGenerator> generator_;
+    std::unique_ptr<SignatureMatcher> signatureMatcher_;
     MatchCallback matchCallback_;
-    
-    // 匹配参数
-    static constexpr size_t kMinMatches = 3;
-    static constexpr double kMinConfidence = 0.5;
 };
 
 } // namespace afp 
