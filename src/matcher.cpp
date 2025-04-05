@@ -4,13 +4,13 @@
 
 namespace afp {
 
-Matcher::Matcher(const Catalog& catalog)
+Matcher::Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config, size_t sampleRate)
     : catalog_(catalog) {
-    generator_ = std::make_unique<SignatureGenerator>();
-    generator_->init();
+    generator_ = std::make_unique<SignatureGenerator>(config);
+    generator_->init(sampleRate);
     
     // 将目录传递给SignatureMatcher，让它预处理目标签名
-    signatureMatcher_ = std::make_unique<SignatureMatcher>(catalog);
+    signatureMatcher_ = std::make_unique<SignatureMatcher>(catalog, config);
 }
 
 Matcher::~Matcher() = default;

@@ -4,6 +4,7 @@
 #include <string>
 #include "fft/fft_interface.h"
 #include "debugger/audio_debugger.h"
+#include "config/performance_config.h"
 
 namespace afp {
 
@@ -32,13 +33,11 @@ struct Peak {
 
 class SignatureGenerator {
 public:
-    SignatureGenerator();
+    explicit SignatureGenerator(std::shared_ptr<PerformanceConfig> config);
     ~SignatureGenerator();
 
     // 初始化生成器
-    bool init(size_t fftSize = 2048, 
-              size_t sampleRate = 44100,
-              size_t hopSize = 512);
+    bool init(size_t sampleRate);
 
     // 添加音频数据
     bool appendStreamBuffer(const float* buffer, 
@@ -53,9 +52,6 @@ public:
     void resetSignatures();
 
 private:
-    // 计算hash值
-    uint32_t computeHash(uint32_t f1, uint32_t f2, uint32_t t);
-    
     // 从音频帧中提取峰值
     std::vector<Peak> extractPeaks(const float* buffer, double timestamp);
     
@@ -66,10 +62,10 @@ private:
         double currentTimestamp);
 
 private:
+    size_t fftSize_;        // FFT窗口大小
     std::unique_ptr<FFTInterface> fft_;
-    size_t fftSize_;
+    std::shared_ptr<PerformanceConfig> config_;
     size_t sampleRate_;
-    size_t hopSize_;
     std::vector<SignaturePoint> signatures_;
     
     // 内部缓冲区

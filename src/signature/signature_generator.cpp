@@ -1,4 +1,5 @@
 #include "signature/signature_generator.h"
+#include "fft/fft_interface.h"
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -6,35 +7,27 @@
 
 namespace afp {
 
-SignatureGenerator::SignatureGenerator() 
-    : fftSize_(2048)
-    , sampleRate_(44100)
-    , hopSize_(512) {
-}
-
-SignatureGenerator::~SignatureGenerator() = default;
-
-bool SignatureGenerator::init(size_t fftSize, size_t sampleRate, size_t hopSize) {
-    fftSize_ = fftSize;
-    sampleRate_ = sampleRate;
-    hopSize_ = hopSize;
-
-    // 创建FFT实例
-    fft_ = FFTFactory::create(fftSize_);
-    if (!fft_ || !fft_->init(fftSize_)) {
-        return false;
-    }
-
+SignatureGenerator::SignatureGenerator(std::shared_ptr<PerformanceConfig> config)
+    : config_(config)
+    , fftSize_(config->getFFTConfig().fftSize)
+    , fft_(FFTFactory::create(fftSize_))
+    , sampleRate_(0) {
+    
     // 初始化汉宁窗
     window_.resize(fftSize_);
     for (size_t i = 0; i < fftSize_; ++i) {
         window_[i] = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / (fftSize_ - 1)));
     }
-
+    
     // 初始化缓冲区
     buffer_.resize(fftSize_);
     fftBuffer_.resize(fftSize_);
+}
 
+SignatureGenerator::~SignatureGenerator() = default;
+
+bool SignatureGenerator::init(size_t sampleRate) {
+    sampleRate_ = sampleRate;
     return true;
 }
 
@@ -57,13 +50,14 @@ bool SignatureGenerator::appendStreamBuffer(const float* buffer,
     buffer_.clear();
     buffer_.resize(fftSize_, 0.0f);
     
-    std::cout << "处理音频数据: " << bufferSize << " 样本, 使用固定大小缓冲区: " << fftSize_ << " 样本" << std::endl;
+    std::cout << "处理音频数据: " << bufferSize << " 样本, 使用固定大小缓冲区: " 
+              << fftSize_ << " 样本" << std::endl;
     
     // 记录处理前的签名数量，用于返回是否生成了新的签名
     size_t initialSignatureCount = signatures_.size();
     
     // 循环处理输入缓冲区
-    size_t hopSize = hopSize_; 
+    size_t hopSize = config_->getFFTConfig().hopSize;
     if (hopSize < 64) hopSize = 64; // 确保hop大小不会太小
     
     size_t offset = 0;
@@ -91,7 +85,8 @@ bool SignatureGenerator::appendStreamBuffer(const float* buffer,
         // 使用当前峰值和历史峰值生成指纹
         if (!currentPeaks.empty() && !peakHistory_.empty()) {
             // 生成指纹 - 当前帧的峰值与历史帧的峰值
-            std::vector<SignaturePoint> newPoints = generateSignaturesFromPeaks(currentPeaks, peakHistory_, currentTimestamp);
+            std::vector<SignaturePoint> newPoints = generateSignaturesFromPeaks(
+                currentPeaks, peakHistory_, currentTimestamp);
             
             // 添加生成的指纹
             signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
@@ -118,7 +113,8 @@ bool SignatureGenerator::appendStreamBuffer(const float* buffer,
     }
     
     size_t newSignaturesGenerated = signatures_.size() - initialSignatureCount;
-    std::cout << "[Debug] 本次调用生成了 " << newSignaturesGenerated << " 个指纹点，总共有 " << signatures_.size() << " 个指纹点" << std::endl;
+    std::cout << "[Debug] 本次调用生成了 " << newSignaturesGenerated << " 个指纹点，总共有 " 
+              << signatures_.size() << " 个指纹点" << std::endl;
     std::cout << "[Debug] 当前峰值历史记录包含 " << peakHistory_.size() << " 个峰值点" << std::endl;
     
     if (newSignaturesGenerated == 0) {
@@ -179,16 +175,21 @@ std::vector<Peak> SignatureGenerator::extractPeaks(const float* buffer, double t
     }
     
     // 查找峰值 - 只选取强度足够的本地最大值
-    for (size_t i = 2; i < fftSize_ / 2 - 2; ++i) {
-        // 仅在 250Hz-5500Hz 范围内寻找峰值，这是 Shazam 常用的频率范围
-        if (frequencies[i] >= 250 && frequencies[i] <= 5500) {
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    for (size_t i = peakConfig.localMaxRange; i < fftSize_ / 2 - peakConfig.localMaxRange; ++i) {
+        // 检查频率范围
+        if (frequencies[i] >= peakConfig.minFreq && frequencies[i] <= peakConfig.maxFreq) {
             // 检查是否是本地最大值
-            if (magnitudes[i] > 0.05 && // 足够强
-                magnitudes[i] > magnitudes[i-1] && 
-                magnitudes[i] > magnitudes[i-2] && 
-                magnitudes[i] > magnitudes[i+1] && 
-                magnitudes[i] > magnitudes[i+2]) {
-                
+            bool isPeak = true;
+            for (size_t j = 1; j <= peakConfig.localMaxRange; ++j) {
+                if (magnitudes[i] <= magnitudes[i-j] || magnitudes[i] <= magnitudes[i+j]) {
+                    isPeak = false;
+                    break;
+                }
+            }
+            
+            // 检查是否超过最小幅度阈值
+            if (isPeak && magnitudes[i] >= peakConfig.minPeakMagnitude) {
                 Peak peak;
                 peak.frequency = static_cast<uint32_t>(frequencies[i]);
                 peak.magnitude = magnitudes[i];
@@ -204,26 +205,21 @@ std::vector<Peak> SignatureGenerator::extractPeaks(const float* buffer, double t
         return a.magnitude > b.magnitude;
     });
     
-    // 只保留最强的峰值（最多10个）
-    if (peaks.size() > 10) {
-        peaks.resize(10);
+    // 只保留最强的峰值
+    if (peaks.size() > peakConfig.maxPeaksPerFrame) {
+        peaks.resize(peakConfig.maxPeaksPerFrame);
     }
     
     return peaks;
 }
 
-// 从峰值生成指纹
 std::vector<SignaturePoint> SignatureGenerator::generateSignaturesFromPeaks(
     const std::vector<Peak>& currentPeaks, 
     const std::vector<Peak>& historyPeaks,
     double currentTimestamp) {
     
     std::vector<SignaturePoint> signatures;
-    
-    // Shazam指纹参数
-    const uint32_t MIN_FREQ_DELTA = 30;    // 最小频率差 (Hz)
-    const uint32_t MAX_FREQ_DELTA = 300;   // 最大频率差 (Hz)
-    const double MAX_TIME_DELTA = 3.0;     // 最大时间差 (秒)
+    const auto& sigConfig = config_->getSignatureGenerationConfig();
     
     // 对每个当前帧的峰值
     for (const auto& currentPeak : currentPeaks) {
@@ -241,12 +237,13 @@ std::vector<SignaturePoint> SignatureGenerator::generateSignaturesFromPeaks(
             double timeDelta = currentPeak.timestamp - historyPeak.timestamp;
             
             // 确保时间差为正（当前帧总是比历史帧更新）
-            if (timeDelta <= 0 || timeDelta > MAX_TIME_DELTA) {
+            if (timeDelta <= 0 || timeDelta > sigConfig.maxTimeDelta) {
                 continue;
             }
             
             // 检查频率差是否在范围内
-            if (std::abs(freqDelta) >= MIN_FREQ_DELTA && std::abs(freqDelta) <= MAX_FREQ_DELTA) {
+            if (std::abs(freqDelta) >= sigConfig.minFreqDelta && 
+                std::abs(freqDelta) <= sigConfig.maxFreqDelta) {
                 // 将时间差转换为毫秒，并限制在0-63范围内
                 uint32_t deltaTimeMs = static_cast<uint32_t>(timeDelta * 1000) % 64;
                 
@@ -284,25 +281,6 @@ void SignatureGenerator::resetSignatures() {
     signatures_.clear();
     peakHistory_.clear(); // 同时清空峰值历史记录
     std::cout << "[Debug] 已重置所有签名和峰值历史" << std::endl;
-}
-
-uint32_t SignatureGenerator::computeHash(uint32_t f1, uint32_t f2, uint32_t t) {
-    // 改进哈希算法，加入时间戳的低位信息
-    // f1 和 f2 分别保留13位，t的低6位
-    // 这样哈希值中包含频率信息和时间信息，增加唯一性
-    uint32_t hash = ((f1 & 0x1FFF) << 19) |  // 高13位用于f1 (频率1)
-                   ((f2 & 0x1FFF) << 6) |    // 中间13位用于f2 (频率2)
-                   (t & 0x3F);               // 低6位用于时间戳
-    
-    // 调试输出
-    static size_t hashCount = 0;
-    if (hashCount < 5) {
-        std::cout << "[Debug] 哈希计算: f1=" << f1 << ", f2=" << f2 
-                  << ", t=" << t << " -> 0x" << std::hex << hash << std::dec << std::endl;
-        hashCount++;
-    }
-    
-    return hash;
 }
 
 } // namespace afp 

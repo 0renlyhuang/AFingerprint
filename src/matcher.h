@@ -5,6 +5,7 @@
 #include "catalog.h"
 #include "media_item.h"
 #include "signature/signature_matcher.h"
+#include "config/performance_config.h"
 
 namespace afp {
 
@@ -20,7 +21,7 @@ class Matcher {
 public:
     using MatchCallback = std::function<void(const MatchResult&)>;
 
-    Matcher(const Catalog& catalog);
+    Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config, size_t sampleRate);
     ~Matcher();
 
     // 添加音频数据

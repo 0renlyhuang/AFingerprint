@@ -8,8 +8,13 @@
 #include "catalog.h"
 #include "matcher.h"
 #include "media_item.h"
+#include "config/performance_config.h"
 
 namespace fs = std::filesystem;
+
+const auto perf_config = afp::PerformanceConfig::getConfig(afp::PlatformType::Mobile);
+
+const size_t sampleRate = 44100;
 
 // 打印指纹信息（用于调试）
 void printSignature(const std::vector<afp::SignaturePoint>& signature, const std::string& prefix) {
@@ -103,8 +108,8 @@ void generateFingerprints(const std::string& algorithm,
         std::cout << "PCM 文件大小: " << buffer.size() << " 样本" << std::endl;
 
         // 生成指纹
-        afp::SignatureGenerator generator;
-        if (!generator.init()) {
+        afp::SignatureGenerator generator(perf_config);
+        if (!generator.init(sampleRate)) {
             std::cerr << "Failed to initialize generator" << std::endl;
             continue;
         }
@@ -161,7 +166,7 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
     }
 
     // 创建匹配器
-    afp::Matcher matcher(catalog);
+    afp::Matcher matcher(catalog, perf_config, sampleRate);
     matcher.setMatchCallback([](const afp::MatchResult& result) {
         std::cout << "Match found:" << std::endl;
         std::cout << "  Title: " << result.mediaItem.title() << std::endl;

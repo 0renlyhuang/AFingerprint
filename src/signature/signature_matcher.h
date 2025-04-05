@@ -4,9 +4,11 @@
 #include <unordered_map>
 #include <functional>
 #include <memory>
+#include <string>
 #include "media_item.h"
 #include "signature/signature_generator.h"
 #include "catalog.h"
+#include "config/performance_config.h"
 
 namespace afp {
 
@@ -29,7 +31,7 @@ public:
     using MatchNotifyCallback = std::function<void(const MatchResult&)>;
     
     // 构造函数 - 接收目录参数
-    SignatureMatcher(const Catalog& catalog);
+    SignatureMatcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config);
     
     // 析构函数
     ~SignatureMatcher();
@@ -52,7 +54,22 @@ public:
         candidates_.clear();
         mediaItemCandidates_.clear();
     }
-    
+
+    // 添加候选音频
+    void addCandidate(const std::string& id, const std::vector<SignaturePoint>& signatures);
+
+    // 移除候选音频
+    void removeCandidate(const std::string& id);
+
+    // 处理新的音频指纹
+    void processSignatures(const std::vector<SignaturePoint>& signatures);
+
+    // 获取匹配结果
+    std::vector<MatchResult> getMatches() const;
+
+    // 清除所有匹配结果
+    void clearMatches();
+
 private:
     // 执行哈希匹配
     void performMatching(const std::vector<SignaturePoint>& querySignature);
@@ -87,11 +104,12 @@ private:
     };
     std::vector<TargetSignatureInfo> targetSignaturesInfo_;  // 预处理的目标签名信息
     
-    // 配置参数
-    static constexpr size_t kMaxCandidates = 50;           // 最大候选结果数
-    static constexpr double kMatchExpireTime = 5.0;        // 候选结果过期时间（秒）
-    static constexpr double kMinConfidenceThreshold = 0.4; // 最小置信度阈值
-    static constexpr size_t kMinMatchesRequired = 15;      // 最小匹配点数
+    std::shared_ptr<PerformanceConfig> config_;
+    size_t maxCandidates_;         // 最大候选结果数
+    double matchExpireTime_;       // 匹配过期时间 (秒)
+    float minConfidenceThreshold_; // 最小置信度阈值
+    size_t minMatchesRequired_;    // 最小匹配点数要求
+    double offsetTolerance_;       // 时间偏移容忍度 (秒)
 };
 
 } // namespace afp 

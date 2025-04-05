@@ -11,8 +11,14 @@ namespace afp {
 
 size_t SignatureMatcher::nextCandidateId_ = 0;
 
-SignatureMatcher::SignatureMatcher(const Catalog& catalog)
-    : catalog_(catalog) {
+SignatureMatcher::SignatureMatcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config)
+    : catalog_(catalog)
+    , config_(config)
+    , maxCandidates_(config_->getMatchingConfig().maxCandidates)
+    , matchExpireTime_(config_->getMatchingConfig().matchExpireTime)
+    , minConfidenceThreshold_(config_->getMatchingConfig().minConfidenceThreshold)
+    , minMatchesRequired_(config_->getMatchingConfig().minMatchesRequired)
+    , offsetTolerance_(config_->getMatchingConfig().offsetTolerance) {
     
     // 预处理所有目标签名
     const auto& signatures = catalog_.signatures();
@@ -128,7 +134,7 @@ void SignatureMatcher::processHashMatch(uint32_t hash, double queryTime,
     
     // 查找是否有相同媒体项且偏移接近的候选
     bool foundCandidate = false;
-    const double offsetTolerance = 0.1; // 100毫秒的偏移容忍度
+    const double offsetTolerance = offsetTolerance_;
     
     // 查找该媒体项的所有候选结果
     auto mediaItemIt = mediaItemCandidates_.find(&mediaItem);
@@ -151,7 +157,7 @@ void SignatureMatcher::processHashMatch(uint32_t hash, double queryTime,
                     
                     // 简单计算置信度：匹配点数量 / 最大阈值 (限制在0-1范围内)
                     candidate.confidence = std::min(1.0, static_cast<double>(candidate.matchCount) / 
-                                           static_cast<double>(kMinMatchesRequired * 2));
+                                           static_cast<double>(minMatchesRequired_ * 2));
                     
                     // 当置信度较高时打印详细信息
                     if (candidate.confidence >= 0.2 && candidate.matchCount % 5 == 0) {
@@ -215,8 +221,8 @@ void SignatureMatcher::updateCandidates(double currentTimestamp) {
 
 bool SignatureMatcher::evaluateCandidate(MatchCandidate& candidate, double currentTimestamp) {
     // 如果达到阈值，生成匹配结果并通知
-    if (candidate.confidence >= kMinConfidenceThreshold && 
-        candidate.matchCount >= kMinMatchesRequired) {
+    if (candidate.confidence >= minConfidenceThreshold_ && 
+        candidate.matchCount >= minMatchesRequired_) {
         
         // 只有在有回调函数的情况下才通知
         if (matchNotifyCallback_) {
@@ -268,7 +274,7 @@ void SignatureMatcher::removeExpiredCandidates(double currentTimestamp) {
     
     for (const auto& candidate : candidates_) {
         // 检查是否过期
-        if (currentTimestamp - candidate.lastMatchTime <= kMatchExpireTime) {
+        if (currentTimestamp - candidate.lastMatchTime <= matchExpireTime_) {
             // 未过期，保留
             size_t newIdx = activeCandidates.size();
             activeCandidates.push_back(candidate);
@@ -289,7 +295,7 @@ void SignatureMatcher::removeExpiredCandidates(double currentTimestamp) {
 }
 
 void SignatureMatcher::limitCandidatesCount() {
-    if (candidates_.size() <= kMaxCandidates) {
+    if (candidates_.size() <= maxCandidates_) {
         return; // 不需要淘汰
     }
     
@@ -299,8 +305,8 @@ void SignatureMatcher::limitCandidatesCount() {
                   return a.lastMatchTime > b.lastMatchTime;
               });
     
-    // 只保留前 kMaxCandidates 个
-    candidates_.resize(kMaxCandidates);
+    // 只保留前 maxCandidates 个
+    candidates_.resize(maxCandidates_);
     
     // 重建媒体项映射
     mediaItemCandidates_.clear();
@@ -309,7 +315,7 @@ void SignatureMatcher::limitCandidatesCount() {
     }
     
     std::cout << "候选数量达到上限，淘汰了 " 
-              << (candidates_.size() - kMaxCandidates) << " 个候选" << std::endl;
+              << (candidates_.size() - maxCandidates_) << " 个候选" << std::endl;
 }
 
 } // namespace afp 
