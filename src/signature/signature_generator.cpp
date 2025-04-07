@@ -10,8 +10,7 @@ namespace afp {
 SignatureGenerator::SignatureGenerator(std::shared_ptr<PerformanceConfig> config)
     : config_(config)
     , fftSize_(config->getFFTConfig().fftSize)
-    , fft_(FFTFactory::create(fftSize_))
-    , sampleRate_(0) {
+    , fft_(FFTFactory::create(fftSize_)) {
     
     // 初始化汉宁窗
     window_.resize(fftSize_);
@@ -26,44 +25,59 @@ SignatureGenerator::SignatureGenerator(std::shared_ptr<PerformanceConfig> config
 
 SignatureGenerator::~SignatureGenerator() = default;
 
-bool SignatureGenerator::init(size_t sampleRate) {
-    sampleRate_ = sampleRate;
+bool SignatureGenerator::init(const PCMFormat& format) {
+    format_ = format;
+    sampleRate_ = format.sampleRate();
+    reader_ = std::make_unique<PCMReader>(format);
     return true;
 }
 
 // 流式处理音频数据
-bool SignatureGenerator::appendStreamBuffer(const float* buffer, 
+bool SignatureGenerator::appendStreamBuffer(const void* buffer, 
                                          size_t bufferSize,
                                          double startTimestamp) {
     if (!buffer || bufferSize == 0) {
         return false;
     }
 
+    // 记录处理前的签名数量，用于返回是否生成了新的签名
+    size_t initialSignatureCount = signatures_.size();
+    
+    // 处理PCM数据
+    std::vector<float> processedBuffer;
+    processedBuffer.reserve(bufferSize / format_.frameSize());
+    
+    // 处理所有通道的数据
+    reader_->process(buffer, bufferSize, [&](float sample, uint32_t channel) {
+        processedBuffer.push_back(sample);
+    });
+    
+    if (processedBuffer.empty()) {
+        return false;
+    }
+    
     // 添加调试信息
     static bool firstCall = true;
-    AudioDebugger::checkAudioBuffer(buffer, bufferSize, startTimestamp, firstCall);
+    AudioDebugger::checkAudioBuffer(processedBuffer.data(), processedBuffer.size(), startTimestamp, firstCall);
     if (firstCall) {
         firstCall = false;
     }
-
+    
     // 初始化处理缓冲区，但不清空已生成的签名
     buffer_.clear();
     buffer_.resize(fftSize_, 0.0f);
     
-    std::cout << "处理音频数据: " << bufferSize << " 样本, 使用固定大小缓冲区: " 
+    std::cout << "处理音频数据: " << processedBuffer.size() << " 样本, 使用固定大小缓冲区: " 
               << fftSize_ << " 样本" << std::endl;
-    
-    // 记录处理前的签名数量，用于返回是否生成了新的签名
-    size_t initialSignatureCount = signatures_.size();
     
     // 循环处理输入缓冲区
     size_t hopSize = config_->getFFTConfig().hopSize;
     if (hopSize < 64) hopSize = 64; // 确保hop大小不会太小
     
     size_t offset = 0;
-    while (offset + fftSize_ <= bufferSize) {
+    while (offset + fftSize_ <= processedBuffer.size()) {
         // 提取当前帧
-        std::memcpy(buffer_.data(), buffer + offset, fftSize_ * sizeof(float));
+        std::memcpy(buffer_.data(), processedBuffer.data() + offset, fftSize_ * sizeof(float));
         
         // 检查复制到buffer_中的数据
         AudioDebugger::checkCopiedBuffer(buffer_, offset, fftSize_);

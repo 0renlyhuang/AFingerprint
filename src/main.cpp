@@ -9,12 +9,18 @@
 #include "matcher.h"
 #include "media_item.h"
 #include "config/performance_config.h"
+#include "audio/pcm_format.h"
 
 namespace fs = std::filesystem;
 
 const auto perf_config = afp::PerformanceConfig::getConfig(afp::PlatformType::Mobile);
 
-const size_t sampleRate = 44100;
+// 默认音频格式：16位有符号整数，小端序，单声道，44100Hz
+const afp::PCMFormat defaultFormat(44100, 
+                                 afp::SampleFormat::S16,
+                                 1,
+                                 afp::Endianness::Little,
+                                 afp::ChannelLayout::Mono);
 
 // 打印指纹信息（用于调试）
 void printSignature(const std::vector<afp::SignaturePoint>& signature, const std::string& prefix) {
@@ -34,7 +40,7 @@ void printSignature(const std::vector<afp::SignaturePoint>& signature, const std
 }
 
 // 读取PCM文件
-std::vector<float> readPCMFile(const std::string& filename) {
+std::vector<uint8_t> readPCMFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
         std::cerr << "Failed to open file: " << filename << std::endl;
@@ -46,41 +52,11 @@ std::vector<float> readPCMFile(const std::string& filename) {
     size_t size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    // s16le格式：每个样本2字节
-    size_t numSamples = size / sizeof(int16_t);
-    std::vector<int16_t> rawBuffer(numSamples);
-    std::vector<float> buffer(numSamples);
-
-    // 读取原始16位整数数据
-    file.read(reinterpret_cast<char*>(rawBuffer.data()), size);
+    // 读取原始数据
+    std::vector<uint8_t> data(size);
+    file.read(reinterpret_cast<char*>(data.data()), size);
     
-    // 将16位整数转换为浮点数，并规范化到[-1.0, 1.0]范围
-    // 16位有符号整数范围是-32768到32767
-    const float normalizationFactor = 1.0f / 32768.0f;
-    
-    std::cout << "[Debug] 转换s16le PCM数据到浮点数..." << std::endl;
-    std::cout << "[Debug] 文件大小: " << size << " 字节, " << numSamples << " 样本" << std::endl;
-    
-    // 打印前10个原始样本值，用于验证
-    std::cout << "[Debug] 前10个原始样本值: ";
-    for (size_t i = 0; i < std::min(size_t(10), numSamples); ++i) {
-        std::cout << rawBuffer[i] << " ";
-    }
-    std::cout << std::endl;
-    
-    // 转换每个样本
-    for (size_t i = 0; i < numSamples; ++i) {
-        buffer[i] = rawBuffer[i] * normalizationFactor;
-    }
-    
-    // 打印前10个转换后的浮点值，用于验证
-    std::cout << "[Debug] 前10个转换后的浮点值: ";
-    for (size_t i = 0; i < std::min(size_t(10), numSamples); ++i) {
-        std::cout << buffer[i] << " ";
-    }
-    std::cout << std::endl;
-    
-    return buffer;
+    return data;
 }
 
 // 生成指纹模式
@@ -105,11 +81,11 @@ void generateFingerprints(const std::string& algorithm,
             continue;
         }
 
-        std::cout << "PCM 文件大小: " << buffer.size() << " 样本" << std::endl;
+        std::cout << "PCM 文件大小: " << buffer.size() << " 字节" << std::endl;
 
         // 生成指纹
         afp::SignatureGenerator generator(perf_config);
-        if (!generator.init(sampleRate)) {
+        if (!generator.init(defaultFormat)) {
             std::cerr << "Failed to initialize generator" << std::endl;
             continue;
         }
@@ -166,7 +142,7 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
     }
 
     // 创建匹配器
-    afp::Matcher matcher(catalog, perf_config, sampleRate);
+    afp::Matcher matcher(catalog, perf_config, defaultFormat);
     matcher.setMatchCallback([](const afp::MatchResult& result) {
         std::cout << "Match found:" << std::endl;
         std::cout << "  Title: " << result.mediaItem.title() << std::endl;
@@ -185,7 +161,7 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
         return;
     }
 
-    std::cout << "待匹配PCM文件大小: " << buffer.size() << " 样本" << std::endl;
+    std::cout << "待匹配PCM文件大小: " << buffer.size() << " 字节" << std::endl;
 
     // 执行匹配
     if (!matcher.appendStreamBuffer(buffer.data(), buffer.size(), 0.0)) {

@@ -4,10 +4,10 @@
 
 namespace afp {
 
-Matcher::Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config, size_t sampleRate)
+Matcher::Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config, const PCMFormat& format)
     : catalog_(catalog) {
     generator_ = std::make_unique<SignatureGenerator>(config);
-    generator_->init(sampleRate);
+    generator_->init(format);
     
     // 将目录传递给SignatureMatcher，让它预处理目标签名
     signatureMatcher_ = std::make_unique<SignatureMatcher>(catalog, config);
@@ -15,7 +15,7 @@ Matcher::Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> conf
 
 Matcher::~Matcher() = default;
 
-bool Matcher::appendStreamBuffer(const float* buffer, 
+bool Matcher::appendStreamBuffer(const void* buffer, 
                               size_t bufferSize,
                               double startTimestamp) {
     if (!generator_->appendStreamBuffer(buffer, bufferSize, startTimestamp)) {

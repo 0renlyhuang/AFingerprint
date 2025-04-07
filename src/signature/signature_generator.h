@@ -5,6 +5,8 @@
 #include "fft/fft_interface.h"
 #include "debugger/audio_debugger.h"
 #include "config/performance_config.h"
+#include "audio/pcm_format.h"
+#include "audio/pcm_reader.h"
 
 namespace afp {
 
@@ -37,10 +39,10 @@ public:
     ~SignatureGenerator();
 
     // 初始化生成器
-    bool init(size_t sampleRate);
+    bool init(const PCMFormat& format);
 
     // 添加音频数据
-    bool appendStreamBuffer(const float* buffer, 
+    bool appendStreamBuffer(const void* buffer, 
                           size_t bufferSize,
                           double startTimestamp);
 
@@ -65,7 +67,9 @@ private:
     size_t fftSize_;        // FFT窗口大小
     std::unique_ptr<FFTInterface> fft_;
     std::shared_ptr<PerformanceConfig> config_;
+    PCMFormat format_;
     size_t sampleRate_;
+    std::unique_ptr<PCMReader> reader_;
     std::vector<SignaturePoint> signatures_;
     
     // 内部缓冲区

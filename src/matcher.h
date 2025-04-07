@@ -6,6 +6,7 @@
 #include "media_item.h"
 #include "signature/signature_matcher.h"
 #include "config/performance_config.h"
+#include "audio/pcm_format.h"
 
 namespace afp {
 
@@ -21,11 +22,11 @@ class Matcher {
 public:
     using MatchCallback = std::function<void(const MatchResult&)>;
 
-    Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config, size_t sampleRate);
+    Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config, const PCMFormat& format);
     ~Matcher();
 
     // 添加音频数据
-    bool appendStreamBuffer(const float* buffer, 
+    bool appendStreamBuffer(const void* buffer, 
                           size_t bufferSize,
                           double startTimestamp);
 
