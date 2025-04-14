@@ -2,6 +2,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <map>
 #include "fft/fft_interface.h"
 #include "debugger/audio_debugger.h"
 #include "config/performance_config.h"
@@ -78,7 +79,7 @@ private:
     std::vector<std::complex<float>> fftBuffer_;
     
     // 存储历史峰值的缓冲区，用于跨帧生成指纹
-    std::vector<Peak> peakHistory_;
+    std::map<uint32_t, std::vector<Peak>> peakHistory_;
     static const size_t MAX_PEAK_HISTORY = 20; // 保存最近20帧的峰值
 };
 

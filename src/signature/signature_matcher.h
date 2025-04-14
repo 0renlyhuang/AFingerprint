@@ -24,6 +24,8 @@ struct MatchCandidate {
     double lastMatchTime;               // 最后一次匹配的时间戳
     std::map<uint32_t, double> matchedHashes;  // 已匹配的哈希值及其对应的时间戳
     size_t id;                          // 唯一标识符
+    size_t channelCount;                // 音频通道数
+    size_t totalTargetHashesCount;      // 目标音频的总特征数
 };
 
 class SignatureMatcher {
@@ -42,7 +44,7 @@ public:
     }
     
     // 处理来自流式输入的指纹点并执行匹配
-    void processQuerySignature(const std::vector<SignaturePoint>& querySignature);
+    void processQuerySignature(const std::vector<SignaturePoint>& querySignature, size_t inputChannelCount);
     
     // 获取当前候选结果集
     const std::vector<MatchCandidate>& candidates() const {
@@ -72,11 +74,11 @@ public:
 
 private:
     // 执行哈希匹配
-    void performMatching(const std::vector<SignaturePoint>& querySignature);
+    void performMatching(const std::vector<SignaturePoint>& querySignature, size_t inputChannelCount);
     
     // 处理单个哈希匹配
     void processHashMatch(uint32_t hash, double queryTime, 
-                         const MediaItem& mediaItem, double targetTime);
+                         const MediaItem& mediaItem, double targetTime, size_t inputChannelCount, size_t totalTargetHashesCount);
     
     // 更新候选结果状态（淘汰过期的，评估匹配置信度）
     void updateCandidates(double currentTimestamp);

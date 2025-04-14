@@ -9,7 +9,7 @@ PCMReader::PCMReader(const PCMFormat& format)
 }
 
 void PCMReader::process(const void* data, size_t size, SampleCallback callback) {
-    if (format_.channelLayout() == ChannelLayout::Mono) {
+    if (format_.layout() == ChannelLayout::Mono) {
         processMono(data, size, callback);
     } else {
         processStereo(data, size, callback);
@@ -45,7 +45,7 @@ void PCMReader::processStereo(const void* data, size_t size, SampleCallback call
 }
 
 float PCMReader::readSample(const uint8_t* ptr) {
-    switch (format_.sampleFormat()) {
+    switch (format_.format()) {
         case SampleFormat::S8: {
             int8_t value = *reinterpret_cast<const int8_t*>(ptr);
             return static_cast<float>(value) / 128.0f;

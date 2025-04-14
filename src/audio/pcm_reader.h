@@ -16,12 +16,17 @@ public:
     explicit PCMReader(const PCMFormat& format);
 
     // 处理PCM数据
-    void process(const void* data, size_t size, const SampleCallback& callback);
+    void process(const void* data, size_t size, SampleCallback callback);
 
 private:
     // 从原始数据读取样本值
-    template<typename T>
-    float readSample(const void* data, size_t offset, bool isSigned) const;
+    float readSample(const uint8_t* ptr);
+    
+    // 处理单声道数据
+    void processMono(const void* data, size_t size, SampleCallback callback);
+    
+    // 处理立体声数据
+    void processStereo(const void* data, size_t size, SampleCallback callback);
 
     // 处理交错格式的数据
     void processInterleaved(const void* data, size_t size, const SampleCallback& callback);

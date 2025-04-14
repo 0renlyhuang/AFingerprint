@@ -38,6 +38,7 @@ public:
 
 private:
     const Catalog& catalog_;
+    PCMFormat format_;  // 存储音频格式信息，包括通道数
     std::unique_ptr<SignatureGenerator> generator_;
     std::unique_ptr<SignatureMatcher> signatureMatcher_;
     MatchCallback matchCallback_;

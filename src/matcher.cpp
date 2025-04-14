@@ -5,7 +5,8 @@
 namespace afp {
 
 Matcher::Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config, const PCMFormat& format)
-    : catalog_(catalog) {
+    : catalog_(catalog)
+    , format_(format) {
     generator_ = std::make_unique<SignatureGenerator>(config);
     generator_->init(format);
     
@@ -29,8 +30,8 @@ bool Matcher::appendStreamBuffer(const void* buffer,
     std::cout << "生成查询指纹点数: " << querySignature.size() << std::endl;
     AudioDebugger::printSignatureDetails(querySignature);
 
-    // 将查询指纹传递给SignatureMatcher处理
-    signatureMatcher_->processQuerySignature(querySignature);
+    // 将查询指纹传递给SignatureMatcher处理，并传入通道数量
+    signatureMatcher_->processQuerySignature(querySignature, format_.channels());
     
     return true;
 }

@@ -39,8 +39,8 @@ std::shared_ptr<PerformanceConfig> PerformanceConfig::createMobileConfig() {
     config->peakDetectionConfig_.maxFreq = 5000;           // 最大频率
     
     // 指纹生成配置 - 移动端使用较宽松的参数
-    config->signatureGenerationConfig_.minFreqDelta = 20;   // 较小的最小频率差
-    config->signatureGenerationConfig_.maxFreqDelta = 400;  // 较大的最大频率差
+    config->signatureGenerationConfig_.minFreqDelta = 40;   // 较小的最小频率差
+    config->signatureGenerationConfig_.maxFreqDelta = 250;  // 较大的最大频率差
     config->signatureGenerationConfig_.maxTimeDelta = 2.0;  // 较短的最大时间差
     
     // 匹配配置 - 移动端使用较严格的参数以减少内存使用

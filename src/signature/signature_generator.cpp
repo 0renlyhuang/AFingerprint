@@ -43,93 +43,108 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
     // 记录处理前的签名数量，用于返回是否生成了新的签名
     size_t initialSignatureCount = signatures_.size();
     
-    // 处理PCM数据
-    std::vector<float> processedBuffer;
-    processedBuffer.reserve(bufferSize / format_.frameSize());
+    // 处理PCM数据，按通道分离数据
+    std::map<uint32_t, std::vector<float>> channelBuffers;
     
     // 处理所有通道的数据
     reader_->process(buffer, bufferSize, [&](float sample, uint32_t channel) {
-        processedBuffer.push_back(sample);
+        channelBuffers[channel].push_back(sample);
     });
     
-    if (processedBuffer.empty()) {
+    if (channelBuffers.empty()) {
         return false;
     }
     
-    // 添加调试信息
-    static bool firstCall = true;
-    AudioDebugger::checkAudioBuffer(processedBuffer.data(), processedBuffer.size(), startTimestamp, firstCall);
-    if (firstCall) {
-        firstCall = false;
-    }
-    
-    // 初始化处理缓冲区，但不清空已生成的签名
-    buffer_.clear();
-    buffer_.resize(fftSize_, 0.0f);
-    
-    std::cout << "处理音频数据: " << processedBuffer.size() << " 样本, 使用固定大小缓冲区: " 
+    std::cout << "处理音频数据: " << bufferSize / format_.frameSize() << " 样本, "
+              << channelBuffers.size() << " 个通道, 使用固定大小缓冲区: " 
               << fftSize_ << " 样本" << std::endl;
     
-    // 循环处理输入缓冲区
-    size_t hopSize = config_->getFFTConfig().hopSize;
-    if (hopSize < 64) hopSize = 64; // 确保hop大小不会太小
-    
-    size_t offset = 0;
-    while (offset + fftSize_ <= processedBuffer.size()) {
-        // 提取当前帧
-        std::memcpy(buffer_.data(), processedBuffer.data() + offset, fftSize_ * sizeof(float));
-        
-        // 检查复制到buffer_中的数据
-        AudioDebugger::checkCopiedBuffer(buffer_, offset, fftSize_);
-        
-        // 应用预加重滤波器以强调高频内容
-        for (size_t i = 1; i < fftSize_; ++i) {
-            buffer_[i] -= 0.95f * buffer_[i-1];
+    // 分别处理每个通道的数据
+    for (auto& [channel, processedBuffer] : channelBuffers) {
+        if (processedBuffer.empty()) {
+            continue;
         }
         
-        // 检查预加重后的数据
-        AudioDebugger::checkPreEmphasisBuffer(buffer_, offset, fftSize_);
+        // 添加调试信息
+        static bool firstCall = true;
+        if (firstCall && channel == 0) {  // 只为第一个通道添加调试信息
+            AudioDebugger::checkAudioBuffer(processedBuffer.data(), processedBuffer.size(), startTimestamp, firstCall);
+            firstCall = false;
+        }
         
-        // 计算准确的时间戳 - 基于采样率和偏移量
-        double currentTimestamp = startTimestamp + offset / static_cast<double>(sampleRate_);
+        // 初始化处理缓冲区，但不清空已生成的签名
+        buffer_.clear();
+        buffer_.resize(fftSize_, 0.0f);
         
-        // 从当前帧中提取峰值，并将它们添加到峰值历史记录中
-        std::vector<Peak> currentPeaks = extractPeaks(buffer_.data(), currentTimestamp);
+        // 循环处理输入缓冲区
+        size_t hopSize = config_->getFFTConfig().hopSize;
+        if (hopSize < 64) hopSize = 64; // 确保hop大小不会太小
         
-        // 使用当前峰值和历史峰值生成指纹
-        if (!currentPeaks.empty() && !peakHistory_.empty()) {
-            // 生成指纹 - 当前帧的峰值与历史帧的峰值
-            std::vector<SignaturePoint> newPoints = generateSignaturesFromPeaks(
-                currentPeaks, peakHistory_, currentTimestamp);
+        size_t offset = 0;
+        while (offset + fftSize_ <= processedBuffer.size()) {
+            // 提取当前帧
+            std::memcpy(buffer_.data(), processedBuffer.data() + offset, fftSize_ * sizeof(float));
             
-            // 添加生成的指纹
-            signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
-            
-            // 调试输出
-            if (!newPoints.empty()) {
-                std::cout << "[Debug] 从当前帧与历史帧生成了 " << newPoints.size() 
-                          << " 个指纹点，当前时间戳: " << currentTimestamp << std::endl;
+            // 检查复制到buffer_中的数据（仅对第一个通道）
+            if (channel == 0) {
+                AudioDebugger::checkCopiedBuffer(buffer_, offset, fftSize_);
             }
+            
+            // 应用预加重滤波器以强调高频内容
+            for (size_t i = 1; i < fftSize_; ++i) {
+                buffer_[i] -= 0.95f * buffer_[i-1];
+            }
+            
+            // 检查预加重后的数据（仅对第一个通道）
+            if (channel == 0) {
+                AudioDebugger::checkPreEmphasisBuffer(buffer_, offset, fftSize_);
+            }
+            
+            // 计算准确的时间戳 - 基于采样率和偏移量
+            double currentTimestamp = startTimestamp + offset / static_cast<double>(sampleRate_);
+            
+            // 从当前帧中提取峰值
+            std::vector<Peak> currentPeaks = extractPeaks(buffer_.data(), currentTimestamp);
+            
+            // 使用当前峰值和历史峰值生成指纹
+            if (!currentPeaks.empty() && !peakHistory_[channel].empty()) {
+                // 生成指纹 - 当前帧的峰值与历史帧的峰值
+                std::vector<SignaturePoint> newPoints = generateSignaturesFromPeaks(
+                    currentPeaks, peakHistory_[channel], currentTimestamp);
+                
+                // 添加生成的指纹
+                signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
+                
+                // 调试输出
+                if (!newPoints.empty() && channel == 0) {  // 仅对第一个通道输出调试信息
+                    std::cout << "[Debug] 从通道 " << channel << " 当前帧与历史帧生成了 " << newPoints.size() 
+                              << " 个指纹点，当前时间戳: " << currentTimestamp << std::endl;
+                }
+            }
+            
+            // 将当前帧的峰值添加到该通道的历史记录中
+            peakHistory_[channel].insert(peakHistory_[channel].end(), currentPeaks.begin(), currentPeaks.end());
+            
+            // 限制历史记录的大小 - 只保留最近的若干帧
+            if (peakHistory_[channel].size() > MAX_PEAK_HISTORY * 10) { // 假设每帧最多10个峰值
+                // 移除最旧的峰值，保留最新的
+                peakHistory_[channel].erase(peakHistory_[channel].begin(), 
+                                   peakHistory_[channel].begin() + (peakHistory_[channel].size() - MAX_PEAK_HISTORY * 10));
+            }
+            
+            // 移动到下一个 hop
+            offset += hopSize;
         }
-        
-        // 将当前帧的峰值添加到历史记录中
-        peakHistory_.insert(peakHistory_.end(), currentPeaks.begin(), currentPeaks.end());
-        
-        // 限制历史记录的大小 - 只保留最近的若干帧
-        if (peakHistory_.size() > MAX_PEAK_HISTORY * 10) { // 假设每帧最多10个峰值
-            // 移除最旧的峰值，保留最新的
-            peakHistory_.erase(peakHistory_.begin(), 
-                               peakHistory_.begin() + (peakHistory_.size() - MAX_PEAK_HISTORY * 10));
-        }
-        
-        // 移动到下一个 hop
-        offset += hopSize;
     }
     
     size_t newSignaturesGenerated = signatures_.size() - initialSignatureCount;
     std::cout << "[Debug] 本次调用生成了 " << newSignaturesGenerated << " 个指纹点，总共有 " 
               << signatures_.size() << " 个指纹点" << std::endl;
-    std::cout << "[Debug] 当前峰值历史记录包含 " << peakHistory_.size() << " 个峰值点" << std::endl;
+    
+    // 输出每个通道的峰值历史记录数量
+    for (const auto& [channel, history] : peakHistory_) {
+        std::cout << "[Debug] 通道 " << channel << " 的峰值历史记录包含 " << history.size() << " 个峰值点" << std::endl;
+    }
     
     if (newSignaturesGenerated == 0) {
         std::cerr << "本次调用未能生成有效指纹，使用备用方案" << std::endl;

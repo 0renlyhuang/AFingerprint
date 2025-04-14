@@ -50,7 +50,7 @@ SignatureMatcher::SignatureMatcher(const Catalog& catalog, std::shared_ptr<Perfo
 SignatureMatcher::~SignatureMatcher() = default;
 
 void SignatureMatcher::processQuerySignature(
-    const std::vector<SignaturePoint>& querySignature) {
+    const std::vector<SignaturePoint>& querySignature, size_t inputChannelCount) {
     
     if (querySignature.empty()) {
         return;
@@ -59,13 +59,13 @@ void SignatureMatcher::processQuerySignature(
     double currentTimestamp = querySignature.back().timestamp;
     
     // 执行匹配
-    performMatching(querySignature);
+    performMatching(querySignature, inputChannelCount);
     
     // 更新候选结果状态
     updateCandidates(currentTimestamp);
 }
 
-void SignatureMatcher::performMatching(const std::vector<SignaturePoint>& querySignature) {
+void SignatureMatcher::performMatching(const std::vector<SignaturePoint>& querySignature, size_t inputChannelCount) {
     if (querySignature.empty() || targetSignaturesInfo_.empty()) {
         return;
     }
@@ -98,6 +98,7 @@ void SignatureMatcher::performMatching(const std::vector<SignaturePoint>& queryS
         
         // 比较哈希值
         size_t hashMatches = 0;
+        size_t totalTargetHashesCount = targetInfo.hashTimestamps.size();
         
         for (const auto& queryPoint : querySignature) {
             auto targetIt = targetInfo.hashTimestamps.find(queryPoint.hash);
@@ -105,7 +106,7 @@ void SignatureMatcher::performMatching(const std::vector<SignaturePoint>& queryS
                 // 找到匹配的哈希
                 for (double targetTime : targetIt->second) {
                     // 处理每个匹配的时间戳
-                    processHashMatch(queryPoint.hash, queryPoint.timestamp, mediaItem, targetTime);
+                    processHashMatch(queryPoint.hash, queryPoint.timestamp, mediaItem, targetTime, inputChannelCount, totalTargetHashesCount);
                     
                     // 只记录一次匹配数，即使一个哈希有多个时间戳
                     if (hashMatches == 0 || queryPoint.hash != querySignature[hashMatches-1].hash) {
@@ -127,7 +128,7 @@ void SignatureMatcher::performMatching(const std::vector<SignaturePoint>& queryS
 }
 
 void SignatureMatcher::processHashMatch(uint32_t hash, double queryTime, 
-                                      const MediaItem& mediaItem, double targetTime) {
+                                      const MediaItem& mediaItem, double targetTime, size_t inputChannelCount, size_t totalTargetHashesCount) {
     
     // 计算时间偏移
     double offset = targetTime - queryTime;
@@ -155,9 +156,30 @@ void SignatureMatcher::processHashMatch(uint32_t hash, double queryTime,
                     candidate.matchCount++;
                     candidate.lastMatchTime = queryTime;
                     
-                    // 简单计算置信度：匹配点数量 / 最大阈值 (限制在0-1范围内)
-                    candidate.confidence = std::min(1.0, static_cast<double>(candidate.matchCount) / 
-                                           static_cast<double>(minMatchesRequired_ * 2));
+                    // 计算置信度
+                    double channelRatio = 1.0;
+                    if (candidate.channelCount > 0) {
+                        // 如果候选音频通道数大于输入音频通道数，则根据通道比例调整最大可匹配特征数
+                        channelRatio = std::min(1.0, static_cast<double>(inputChannelCount) / candidate.channelCount);
+                    }
+                    
+                    // 计算考虑通道比例后的最大可匹配特征数
+                    size_t maxPossibleMatches = static_cast<size_t>(candidate.totalTargetHashesCount * channelRatio);
+                    
+                    // 计算置信度
+                    if (candidate.matchCount >= minMatchesRequired_) {
+                        if (candidate.matchCount >= maxPossibleMatches) {
+                            candidate.confidence = 1.0;
+                        } else {
+                            candidate.confidence = static_cast<double>(candidate.matchCount) / maxPossibleMatches;
+                        }
+                    } else {
+                        if (maxPossibleMatches < minMatchesRequired_) {
+                            candidate.confidence = static_cast<double>(candidate.matchCount) / minMatchesRequired_;
+                        } else {
+                            candidate.confidence = 0.0;
+                        }
+                    }
                     
                     // 当置信度较高时打印详细信息
                     if (candidate.confidence >= 0.2 && candidate.matchCount % 5 == 0) {
@@ -188,6 +210,8 @@ void SignatureMatcher::processHashMatch(uint32_t hash, double queryTime,
         newCandidate.lastMatchTime = queryTime;
         newCandidate.matchedHashes[hash] = queryTime;
         newCandidate.id = nextCandidateId_++;
+        newCandidate.channelCount = mediaItem.channelCount();  // 存储候选音频的通道数
+        newCandidate.totalTargetHashesCount = totalTargetHashesCount;
         
         // 添加新候选
         size_t newIdx = candidates_.size();

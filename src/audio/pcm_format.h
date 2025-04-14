@@ -93,7 +93,9 @@ public:
         std::string result = "Sample Rate: " + std::to_string(sampleRate_) + " Hz, ";
         result += "Format: " + formatToString() + ", ";
         result += "Channels: " + std::to_string(channels_) + ", ";
-        result += "Endianness: " + (endianness_ == Endianness::Little ? "Little" : "Big") + ", ";
+        result += "Endianness: ";
+        result += (endianness_ == Endianness::Little ? "Little" : "Big");
+        result += ", ";
         result += "Layout: " + layoutToString() + ", ";
         result += "Interleaved: " + std::string(interleaved_ ? "Yes" : "No");
         return result;

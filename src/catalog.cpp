@@ -77,6 +77,7 @@ bool Catalog::saveToFile(const std::string& filename) const {
         const std::string& title = mediaItems_[i].title();
         const std::string& subtitle = mediaItems_[i].subtitle();
         const auto& customInfo = mediaItems_[i].customInfo();
+        uint32_t channelCount = static_cast<uint32_t>(mediaItems_[i].channelCount());
 
         // 写入标题长度和数据
         uint32_t titleLen = static_cast<uint32_t>(title.length());
@@ -108,6 +109,13 @@ bool Catalog::saveToFile(const std::string& filename) const {
                 std::cerr << "写入副标题失败" << std::endl;
                 return false;
             }
+        }
+
+        // 写入通道数量
+        file.write(reinterpret_cast<const char*>(&channelCount), sizeof(channelCount));
+        if (!file.good()) {
+            std::cerr << "写入通道数量失败" << std::endl;
+            return false;
         }
 
         // 写入自定义信息数量
@@ -309,6 +317,14 @@ bool Catalog::writeEntry(std::ofstream& file,
         if (!file.good()) return false;
     }
 
+    // 写入通道数量
+    uint32_t channelCount = static_cast<uint32_t>(mediaItem.channelCount());
+    file.write(reinterpret_cast<const char*>(&channelCount), sizeof(channelCount));
+    if (!file.good()) {
+        std::cerr << "写入通道数量失败" << std::endl;
+        return false;
+    }
+
     // 写入自定义信息数量
     uint32_t numCustomInfo = static_cast<uint32_t>(customInfo.size());
     file.write(reinterpret_cast<const char*>(&numCustomInfo), sizeof(numCustomInfo));
@@ -455,6 +471,15 @@ bool Catalog::readEntry(std::ifstream& file,
         }
         mediaItem.setSubtitle(subtitle);
     }
+
+    // 读取通道数量
+    uint32_t channelCount;
+    file.read(reinterpret_cast<char*>(&channelCount), sizeof(channelCount));
+    if (!file.good()) {
+        std::cerr << "错误: 读取通道数量失败" << std::endl;
+        return false;
+    }
+    mediaItem.setChannelCount(channelCount);
 
     // 读取自定义信息数量
     uint32_t numCustomInfo;
