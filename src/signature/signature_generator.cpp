@@ -7,7 +7,7 @@
 
 namespace afp {
 
-SignatureGenerator::SignatureGenerator(std::shared_ptr<PerformanceConfig> config)
+SignatureGenerator::SignatureGenerator(std::shared_ptr<IPerformanceConfig> config)
     : config_(config)
     , fftSize_(config->getFFTConfig().fftSize)
     , fft_(FFTFactory::create(fftSize_)) {

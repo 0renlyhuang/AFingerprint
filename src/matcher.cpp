@@ -4,7 +4,7 @@
 
 namespace afp {
 
-Matcher::Matcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config, const PCMFormat& format)
+Matcher::Matcher(std::shared_ptr<ICatalog> catalog, std::shared_ptr<IPerformanceConfig> config, const PCMFormat& format)
     : catalog_(catalog)
     , format_(format) {
     generator_ = std::make_unique<SignatureGenerator>(config);

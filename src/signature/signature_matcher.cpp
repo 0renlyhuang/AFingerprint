@@ -11,18 +11,18 @@ namespace afp {
 
 size_t SignatureMatcher::nextCandidateId_ = 0;
 
-SignatureMatcher::SignatureMatcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config)
+SignatureMatcher::SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::shared_ptr<IPerformanceConfig> config)
     : catalog_(catalog)
     , config_(config)
-    , maxCandidates_(config_->getMatchingConfig().maxCandidates)
-    , matchExpireTime_(config_->getMatchingConfig().matchExpireTime)
-    , minConfidenceThreshold_(config_->getMatchingConfig().minConfidenceThreshold)
-    , minMatchesRequired_(config_->getMatchingConfig().minMatchesRequired)
-    , offsetTolerance_(config_->getMatchingConfig().offsetTolerance) {
+    , maxCandidates_(config->getMatchingConfig().maxCandidates)
+    , matchExpireTime_(config->getMatchingConfig().matchExpireTime)
+    , minConfidenceThreshold_(config->getMatchingConfig().minConfidenceThreshold)
+    , minMatchesRequired_(config->getMatchingConfig().minMatchesRequired)
+    , offsetTolerance_(config->getMatchingConfig().offsetTolerance) {
     
     // 预处理所有目标签名
-    const auto& signatures = catalog_.signatures();
-    const auto& mediaItems = catalog_.mediaItems();
+    const auto& signatures = catalog_->signatures();
+    const auto& mediaItems = catalog_->mediaItems();
     
     for (size_t i = 0; i < signatures.size(); ++i) {
         const auto& signature = signatures[i];
@@ -85,7 +85,7 @@ void SignatureMatcher::performMatching(const std::vector<SignaturePoint>& queryS
         const auto& mediaItem = *(targetInfo.mediaItem);
         
         // 使用AudioDebugger打印目标指纹统计信息
-        AudioDebugger::printTargetSignatureStats(catalog_.signatures()[i], mediaItem.title(), i);
+        AudioDebugger::printTargetSignatureStats(catalog_->signatures()[i], mediaItem.title(), i);
         
         // 计算目标指纹中的唯一哈希值
         std::unordered_set<uint32_t> uniqueTargetHashes;

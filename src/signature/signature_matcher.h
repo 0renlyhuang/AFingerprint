@@ -33,7 +33,7 @@ public:
     using MatchNotifyCallback = std::function<void(const MatchResult&)>;
     
     // 构造函数 - 接收目录参数
-    SignatureMatcher(const Catalog& catalog, std::shared_ptr<PerformanceConfig> config);
+    SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::shared_ptr<IPerformanceConfig> config);
     
     // 析构函数
     ~SignatureMatcher();
@@ -93,7 +93,7 @@ private:
     void limitCandidatesCount();
     
 private:
-    const Catalog& catalog_;  // 存储目录引用
+    std::shared_ptr<ICatalog> catalog_;  // 存储目录引用
     std::vector<MatchCandidate> candidates_;  // 所有候选结果
     std::unordered_map<const MediaItem*, std::vector<size_t>> mediaItemCandidates_;  // 媒体项到候选索引的映射
     MatchNotifyCallback matchNotifyCallback_;  // 匹配通知回调
@@ -106,7 +106,7 @@ private:
     };
     std::vector<TargetSignatureInfo> targetSignaturesInfo_;  // 预处理的目标签名信息
     
-    std::shared_ptr<PerformanceConfig> config_;
+    std::shared_ptr<IPerformanceConfig> config_;
     size_t maxCandidates_;         // 最大候选结果数
     double matchExpireTime_;       // 匹配过期时间 (秒)
     float minConfidenceThreshold_; // 最小置信度阈值

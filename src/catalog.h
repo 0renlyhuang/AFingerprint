@@ -5,31 +5,32 @@
 #include <unordered_map>
 #include "signature/signature_generator.h"
 #include "media_item.h"
+#include "icatalog.h"
 
 namespace afp {
 
-class Catalog {
+class Catalog : public ICatalog {
 public:
     Catalog() = default;
-    ~Catalog() = default;
+    ~Catalog() override = default;
 
     // 添加指纹和媒体信息
     void addSignature(const std::vector<SignaturePoint>& signature, 
-                     const MediaItem& mediaItem);
+                     const MediaItem& mediaItem) override;
 
     // 序列化到文件
-    bool saveToFile(const std::string& filename) const;
+    bool saveToFile(const std::string& filename) const override;
 
     // 从文件反序列化
-    bool loadFromFile(const std::string& filename);
+    bool loadFromFile(const std::string& filename) override;
 
     // 获取所有指纹
-    const std::vector<std::vector<SignaturePoint>>& signatures() const {
+    const std::vector<std::vector<SignaturePoint>>& signatures() const override {
         return signatures_;
     }
 
     // 获取所有媒体信息
-    const std::vector<MediaItem>& mediaItems() const {
+    const std::vector<MediaItem>& mediaItems() const override {
         return mediaItems_;
     }
 

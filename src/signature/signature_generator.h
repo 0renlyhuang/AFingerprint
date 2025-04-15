@@ -5,18 +5,12 @@
 #include <map>
 #include "fft/fft_interface.h"
 #include "debugger/audio_debugger.h"
-#include "config/performance_config.h"
+#include "config/iperformance_config.h"
 #include "audio/pcm_format.h"
 #include "audio/pcm_reader.h"
+#include "isignature_generator.h"
 
 namespace afp {
-
-struct SignaturePoint {
-    uint32_t hash;           // 音频指纹hash值
-    double timestamp;        // 时间戳（秒）
-    uint32_t frequency;      // 频率（Hz）
-    uint32_t amplitude;      // 振幅
-};
 
 // 星座图中的锚点和目标点
 struct ConstellationPoint {
@@ -34,25 +28,24 @@ struct Peak {
     double timestamp;     // 时间戳 (秒)
 };
 
-class SignatureGenerator {
+class SignatureGenerator : public ISignatureGenerator {
 public:
-    explicit SignatureGenerator(std::shared_ptr<PerformanceConfig> config);
-    ~SignatureGenerator();
+    explicit SignatureGenerator(std::shared_ptr<IPerformanceConfig> config);
+    ~SignatureGenerator() override;
 
     // 初始化生成器
-    bool init(const PCMFormat& format);
+    bool init(const PCMFormat& format) override;
 
     // 添加音频数据
     bool appendStreamBuffer(const void* buffer, 
                           size_t bufferSize,
-                          double startTimestamp);
+                          double startTimestamp) override;
 
     // 获取生成的指纹
-    std::vector<SignaturePoint> signature() const;
+    std::vector<SignaturePoint> signature() const override;
     
     // 重置所有已生成的签名
-    // 在开始新的音频流时调用
-    void resetSignatures();
+    void resetSignatures() override;
 
 private:
     // 从音频帧中提取峰值
@@ -67,7 +60,7 @@ private:
 private:
     size_t fftSize_;        // FFT窗口大小
     std::unique_ptr<FFTInterface> fft_;
-    std::shared_ptr<PerformanceConfig> config_;
+    std::shared_ptr<IPerformanceConfig> config_;
     PCMFormat format_;
     size_t sampleRate_;
     std::unique_ptr<PCMReader> reader_;
