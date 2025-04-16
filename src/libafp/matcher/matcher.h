@@ -2,12 +2,12 @@
 #include <functional>
 #include <memory>
 #include "signature/signature_generator.h"
-#include "icatalog.h"
-#include "media_item.h"
+#include "afp/icatalog.h"
+#include "afp/media_item.h"
 #include "signature/signature_matcher.h"
 #include "config/performance_config.h"
-#include "audio/pcm_format.h"
-#include "imatcher.h"
+#include "afp/pcm_format.h"
+#include "afp/imatcher.h"
 
 namespace afp {
 

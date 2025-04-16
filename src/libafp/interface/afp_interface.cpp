@@ -1,8 +1,8 @@
-#include "interface/afp_interface.h"
-#include "catalog.h"
+#include "afp/afp_interface.h"
+#include "catalog/catalog.h"
 #include "signature/signature_generator.h"
-#include "config/performance_config_factory.h"
-#include "matcher.h"
+#include "afp/performance_config_factory.h"
+#include "matcher/matcher.h"
 
 namespace afp {
 

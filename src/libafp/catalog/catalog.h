@@ -4,8 +4,8 @@
 #include <memory>
 #include <unordered_map>
 #include "signature/signature_generator.h"
-#include "media_item.h"
-#include "icatalog.h"
+#include "afp/media_item.h"
+#include "afp/icatalog.h"
 
 namespace afp {
 

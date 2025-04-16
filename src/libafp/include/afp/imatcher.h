@@ -1,12 +1,8 @@
 #pragma once
 #include <functional>
 #include <memory>
-#include "signature/signature_generator.h"
-#include "icatalog.h"
-#include "media_item.h"
-#include "signature/signature_matcher.h"
-#include "config/performance_config.h"
-#include "audio/pcm_format.h"
+#include "afp/media_item.h"
+#include "afp/isignature_generator.h"
 
 namespace afp {
 

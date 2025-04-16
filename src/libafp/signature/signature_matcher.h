@@ -5,9 +5,9 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include "media_item.h"
+#include "afp/media_item.h"
 #include "signature/signature_generator.h"
-#include "catalog.h"
+#include "catalog/catalog.h"
 #include "config/performance_config.h"
 
 namespace afp {

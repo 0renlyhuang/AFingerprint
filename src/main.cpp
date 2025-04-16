@@ -4,9 +4,7 @@
 #include <vector>
 #include <string>
 #include <iomanip>
-#include "interface/afp_interface.h"
-#include "media_item.h"
-#include "audio/pcm_format.h"
+#include "afp/afp_interface.h"
 
 namespace fs = std::filesystem;
 

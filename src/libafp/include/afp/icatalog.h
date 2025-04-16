@@ -1,8 +1,8 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "signature/signature_generator.h"
-#include "media_item.h"
+#include "afp/isignature_generator.h"
+#include "afp/media_item.h"
 
 namespace afp {
 

@@ -1,11 +1,10 @@
 #pragma once
 
 #include <memory>
-#include "icatalog.h"
-#include "signature/isignature_generator.h"
-#include "imatcher.h"
-#include "config/iperformance_config.h"
-#include "audio/pcm_format.h"
+#include "afp/icatalog.h"
+#include "afp/isignature_generator.h"
+#include "afp/imatcher.h"
+#include "afp/iperformance_config.h"
 
 namespace afp::interface {
 

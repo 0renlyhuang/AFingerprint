@@ -1,6 +1,6 @@
 #pragma once
 #include <memory>
-#include "iperformance_config.h"
+#include "afp/iperformance_config.h"
 
 namespace afp {
 

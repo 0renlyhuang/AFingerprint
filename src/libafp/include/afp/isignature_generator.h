@@ -1,9 +1,6 @@
 #pragma once
 #include <vector>
-#include <memory>
-#include "fft/fft_interface.h"
-#include "config/iperformance_config.h"
-#include "audio/pcm_format.h"
+#include "afp/pcm_format.h"
 
 namespace afp {
 

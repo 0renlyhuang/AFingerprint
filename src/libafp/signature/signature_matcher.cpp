@@ -1,5 +1,5 @@
 #include "signature/signature_matcher.h"
-#include "matcher.h"
+#include "matcher/matcher.h"
 #include "debugger/audio_debugger.h"
 #include <algorithm>
 #include <iostream>

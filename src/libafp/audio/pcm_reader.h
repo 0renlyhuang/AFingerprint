@@ -1,6 +1,6 @@
 #pragma once
 
-#include "audio/pcm_format.h"
+#include "afp/pcm_format.h"
 #include <cstdint>
 #include <vector>
 #include <functional>

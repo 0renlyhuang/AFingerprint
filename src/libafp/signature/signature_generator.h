@@ -5,10 +5,10 @@
 #include <map>
 #include "fft/fft_interface.h"
 #include "debugger/audio_debugger.h"
-#include "config/iperformance_config.h"
-#include "audio/pcm_format.h"
+#include "afp/iperformance_config.h"
+#include "afp/pcm_format.h"
 #include "audio/pcm_reader.h"
-#include "isignature_generator.h"
+#include "afp/isignature_generator.h"
 
 namespace afp {
 
