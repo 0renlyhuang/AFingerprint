@@ -1,0 +1,1 @@
+./build/AFingerprint generate shazam fingerprints.db test_pcm/v_s_1.pcm
