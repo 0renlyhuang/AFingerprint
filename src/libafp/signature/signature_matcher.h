@@ -28,6 +28,7 @@ struct MatchCandidate {
     size_t totalTargetHashesCount;      // 目标音频的总特征数
 };
 
+
 class SignatureMatcher {
 public:
     using MatchNotifyCallback = std::function<void(const MatchResult&)>;
@@ -106,12 +107,36 @@ private:
     };
     std::vector<TargetSignatureInfo> targetSignaturesInfo_;  // 预处理的目标签名信息
     
+
+    struct TargetSignatureInfo2 {
+        const std::shared_ptr<MediaItem> mediaItem;
+        double hashTimestamp;
+        const std::vector<SignaturePoint> *signature;
+    };
+    std::unordered_map<uint32_t, std::vector<TargetSignatureInfo2>> hash2TargetSignaturesInfoMap_;  // 哈希值到时间戳的映射
+
     std::shared_ptr<IPerformanceConfig> config_;
     size_t maxCandidates_;         // 最大候选结果数
     double matchExpireTime_;       // 匹配过期时间 (秒)
     float minConfidenceThreshold_; // 最小置信度阈值
     size_t minMatchesRequired_;    // 最小匹配点数要求
     double offsetTolerance_;       // 时间偏移容忍度 (秒)
+
+    std::unordered_map< const std::vector<SignaturePoint> *, size_t> signature2SessionCnt_;
+
+
+    struct MatchingCandidate {
+        const TargetSignatureInfo2* targetSignatureInfo; // 目标签名信息
+        size_t maxPossibleMatches;          // 最大可能匹配点数 
+        size_t matchCount;                  // 匹配点数量
+        double lastMatchTime;               // 最后一次匹配的时间戳
+        int32_t offset;                     // 时间偏移
+        bool isMatchCountChanged;           // 是否匹配点数量发生变化
+        bool isNotified;                    // 是否已通知
+    };
+    std::unordered_map<CandidateSessionKey, MatchingCandidate> session2CandidateMap_;
+    std::vector<MatchResult> matchResults_;
+    std::vector<CandidateSessionKey> expiredCandidateSessionKeys_;
 };
 
 } // namespace afp 

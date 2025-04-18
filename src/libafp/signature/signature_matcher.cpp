@@ -8,8 +8,74 @@
 #include <unordered_set>
 
 namespace afp {
+struct CandidateSessionKey {
+    int32_t offset;
+    const std::vector<SignaturePoint>* signature;
+};
+}
+
+namespace std {
+    template <>
+    struct hash<afp::CandidateSessionKey> {
+        size_t operator()(const afp::CandidateSessionKey& k) const {
+            uintptr_t ptr = reinterpret_cast<uintptr_t>(k.offset);
+#if INTPTR_MAX == INT32_MAX  // 32-bit platform
+            uint32_t ptr_low16 = static_cast<uint32_t>(ptr & 0xFFFF);
+            uint32_t offset_low16 = static_cast<uint32_t>(k.offset & 0xFFFF);
+            return static_cast<size_t>((ptr_low16 << 16) | offset_low16);
+#else  // 64-bit platform
+            uint64_t ptr_low32 = static_cast<uint64_t>(ptr & 0xFFFFFFFF);
+            uint64_t offset_low32 = static_cast<uint64_t>(k.offset & 0xFFFFFFFF);
+            return static_cast<size_t>((ptr_low32 << 32) | offset_low32);
+#endif
+        }
+    };
+}
+
+namespace afp {
+
+struct CandidateSessionKey {
+    int32_t offset;
+    const std::vector<SignaturePoint>* signature;
+};
 
 size_t SignatureMatcher::nextCandidateId_ = 0;
+
+// SignatureMatcher::SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::shared_ptr<IPerformanceConfig> config)
+//     : catalog_(catalog)
+//     , config_(config)
+//     , maxCandidates_(config->getMatchingConfig().maxCandidates)
+//     , matchExpireTime_(config->getMatchingConfig().matchExpireTime)
+//     , minConfidenceThreshold_(config->getMatchingConfig().minConfidenceThreshold)
+//     , minMatchesRequired_(config->getMatchingConfig().minMatchesRequired)
+//     , offsetTolerance_(config->getMatchingConfig().offsetTolerance) {
+    
+//     // 预处理所有目标签名
+//     const auto& signatures = catalog_->signatures();
+//     const auto& mediaItems = catalog_->mediaItems();
+    
+//     for (size_t i = 0; i < signatures.size(); ++i) {
+//         const auto& signature = signatures[i];
+//         const auto& mediaItem = mediaItems[i];
+        
+//         if (signature.empty()) {
+//             std::cerr << "警告: 数据库中的指纹 #" << i << " (" << mediaItem.title() << ") 是空的!" << std::endl;
+//             continue;
+//         }
+        
+//         TargetSignatureInfo info;
+//         info.mediaItem = &mediaItem;
+        
+//         // 为每个哈希值建立时间戳映射
+//         for (const auto& point : signature) {
+//             info.hashTimestamps[point.hash].push_back(point.timestamp);
+//         }
+        
+//         targetSignaturesInfo_.push_back(std::move(info));
+//         std::cout << "已预处理媒体项: " << mediaItem.title() 
+//                   << " (哈希值数量: " << info.hashTimestamps.size() << ")" << std::endl;
+//     }
+// }
 
 SignatureMatcher::SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::shared_ptr<IPerformanceConfig> config)
     : catalog_(catalog)
@@ -18,7 +84,9 @@ SignatureMatcher::SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::share
     , matchExpireTime_(config->getMatchingConfig().matchExpireTime)
     , minConfidenceThreshold_(config->getMatchingConfig().minConfidenceThreshold)
     , minMatchesRequired_(config->getMatchingConfig().minMatchesRequired)
-    , offsetTolerance_(config->getMatchingConfig().offsetTolerance) {
+    , offsetTolerance_(config->getMatchingConfig().offsetTolerance)
+    , matchResults_(std::vector<MatchResult>(config->getMatchingConfig().maxCandidates))
+    , expiredCandidateSessionKeys_(std::vector<CandidateSessionKey>(config->getMatchingConfig().maxCandidates)) {
     
     // 预处理所有目标签名
     const auto& signatures = catalog_->signatures();
@@ -32,22 +100,177 @@ SignatureMatcher::SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::share
             std::cerr << "警告: 数据库中的指纹 #" << i << " (" << mediaItem.title() << ") 是空的!" << std::endl;
             continue;
         }
-        
-        TargetSignatureInfo info;
-        info.mediaItem = &mediaItem;
-        
-        // 为每个哈希值建立时间戳映射
+
+        // todo: 性能提升手段：
+        // 对于单个hash值，不需要vector存储，直接存储
+        // 对于多个hash值，需要vector存储
         for (const auto& point : signature) {
-            info.hashTimestamps[point.hash].push_back(point.timestamp);
+            TargetSignatureInfo2 info = {std::make_shared<MediaItem>(mediaItem), point.timestamp, &signature};
+            if (hash2TargetSignaturesInfoMap_.find(point.hash) == hash2TargetSignaturesInfoMap_.end()) {
+                hash2TargetSignaturesInfoMap_[point.hash].push_back(info);
+            } else {
+                hash2TargetSignaturesInfoMap_[point.hash] = {info};
+            }
         }
-        
-        targetSignaturesInfo_.push_back(std::move(info));
-        std::cout << "已预处理媒体项: " << mediaItem.title() 
-                  << " (哈希值数量: " << info.hashTimestamps.size() << ")" << std::endl;
     }
 }
 
 SignatureMatcher::~SignatureMatcher() = default;
+
+
+
+void SignatureMatcher::processQuerySignature(
+    const std::vector<SignaturePoint>& querySignature, size_t inputChannelCount) {
+    
+    // 计算两个时间戳之间的近似时间偏移, 对于相近的时间戳，统一收敛到一个值，这样能提高系统的鲁棒性
+    // TODO: 确认用int32_t存储时，时间的单位是什么
+    auto approximate_time_offset_func = [this](double queryTime, double targetTime) -> int32_t {
+        int32_t offset = static_cast<int32_t>(targetTime - queryTime);
+        if (offset < offsetTolerance_) {
+            return targetTime;
+        }
+        return offset;
+    };
+
+
+    if (querySignature.empty()) {
+        return;
+    }
+    if (hash2TargetSignaturesInfoMap_.empty()) {
+        return;
+    }
+    
+    // step1 add/update candidate
+    for (const auto& queryPoint : querySignature) {
+        auto targetIt = hash2TargetSignaturesInfoMap_.find(queryPoint.hash);
+        if (targetIt == hash2TargetSignaturesInfoMap_.end()) {
+            continue;
+        }
+
+        const auto& targetSignaturesInfoList = targetIt->second;
+        for (const auto& targetSignaturesInfo : targetSignaturesInfoList) {
+
+            if (signature2SessionCnt_[targetSignaturesInfo.signature] >= 3) {
+                continue;
+            }
+            const auto offset = approximate_time_offset_func(queryPoint.timestamp, targetSignaturesInfo.hashTimestamp);
+            
+            // if session2CandidateMap_ not contains the key, or query time is less than candidate.lastMatchTime, then create a new candidate session
+            // if session2CandidateMap_ contains the key, and query time is greater than candidate.lastMatchTime, then update the candidate session
+
+            const auto sessionKey = CandidateSessionKey{
+                .offset = offset,
+                .signature = &targetSignaturesInfo.signature
+            };
+            bool isNewCandidate = true;
+            if (session2CandidateMap_.find(sessionKey) != session2CandidateMap_.end()) {
+                auto& candidate = session2CandidateMap_[sessionKey];
+                if (candidate.isNotified) {
+                    continue;
+                }
+                if (queryPoint.timestamp > candidate.lastMatchTime) {
+                    candidate.matchCount += 1;
+                    candidate.lastMatchTime = queryPoint.timestamp;
+                    candidate.isMatchCountChanged = true;
+
+                    isNewCandidate = false;
+                } 
+            }
+
+            if (isNewCandidate && session2CandidateMap_.size() < maxCandidates_) {
+                signature2SessionCnt_[targetSignaturesInfo.signature] += 1;
+                
+                double channelRatio = 1.0;
+                const auto targetChannelCount = targetSignaturesInfo.mediaItem->channelCount();
+                if (targetChannelCount > 0) {
+                    // 如果候选音频通道数大于输入音频通道数，则根据通道比例调整最大可匹配特征数
+                    channelRatio = std::min(1.0, static_cast<double>(inputChannelCount) / targetChannelCount
+                }
+                // 计算考虑通道比例后的最大可匹配特征数
+                const auto targetHashesCount = targetSignaturesInfo.signature->size();
+                const auto maxPossibleMatches = static_cast<size_t>(targetHashesCount * channelRatio);
+
+                MatchingCandidate candidate = {
+                    .targetSignatureInfo = &targetSignaturesInfo,
+                    .maxPossibleMatches = maxPossibleMatches,
+                    .matchCount = 1,
+                    .lastMatchTime = queryPoint.timestamp,
+                    .offset = offset,
+                    .isMatchCountChanged = true,
+                    .isNotified = false,
+                };
+                session2CandidateMap_[sessionKey] = candidate;
+            }
+        }
+    }
+
+
+    // step2 evaluate candidate
+    double currentTimestamp = querySignature.back().timestamp;
+    matchResults_.clear();
+    expiredCandidateSessionKeys_.clear();
+
+    auto evaluateConfidenceFunc = [this](const MatchingCandidate& candidate) -> double {
+        double confidence = 0.0;
+        // 计算置信度
+        if (candidate.matchCount >= minMatchesRequired_) {
+            if (candidate.matchCount >= candidate.maxPossibleMatches) {
+                confidence = 1.0;
+            } else {
+                confidence = static_cast<double>(candidate.matchCount) / candidate.maxPossibleMatches;
+            }
+        } else {
+            if (candidate.maxPossibleMatches < minMatchesRequired_) {
+                confidence = static_cast<double>(candidate.matchCount) / minMatchesRequired_;
+            } else {
+                confidence = 0.0;
+            }
+        }
+        return confidence;
+    };
+    
+    for (const auto& [sessionKey, candidate] : session2CandidateMap_) {
+
+        if (candidate.isMatchCountChanged && !candidate.isNotified) {
+            const auto confidence = evaluateConfidenceFunc(candidate);
+            if (confidence >= minConfidenceThreshold_ &&  candidate.matchCount >= minMatchesRequired_) {
+                auto matchResult = MatchResult{
+                    .mediaItem = candidate.targetSignatureInfo->mediaItem,
+                    .offset = candidate.offset,
+                    .confidence = confidence,
+                    .matchedPoints = {},
+                    .id = 0,
+                };
+                matchResults_.push_back(matchResult);
+                session2CandidateMap_[sessionKey].isNotified = true;
+            }
+        }
+
+
+        if (candidate.lastMatchTime + matchExpireTime_ < currentTimestamp) {
+            expiredCandidateSessionKeys_.push_back(sessionKey);
+        }
+    }
+
+    // Setp3 notify match result
+    for (const auto& matchResult : matchResults_) {
+        matchNotifyCallback_(matchResult);
+    }
+
+
+    // Setp4 remove expired candidate
+    for (const auto& expiredCandidateSessionKey : expiredCandidateSessionKeys_) {
+        session2CandidateMap_.erase(expiredCandidateSessionKey);
+        signature2SessionCnt_[expiredCandidateSessionKey.signature] -= 1;
+    }
+    
+    // // 执行匹配
+    // performMatching(querySignature, inputChannelCount);
+    
+    // // 更新候选结果状态
+
+    // updateCandidates(currentTimestamp);
+}
 
 void SignatureMatcher::processQuerySignature(
     const std::vector<SignaturePoint>& querySignature, size_t inputChannelCount) {
