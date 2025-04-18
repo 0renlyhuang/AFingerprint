@@ -36,7 +36,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->signatureGenerationConfig_.maxTimeDelta = 2.0;  // 较短的最大时间差
     
     // 匹配配置 - 移动端使用较严格的参数以减少内存使用
-    config->matchingConfig_.maxCandidates = 100000;//20;            // 较少的候选结果
+    config->matchingConfig_.maxCandidates = 20;            // 较少的候选结果
     config->matchingConfig_.matchExpireTime = 3.0;         // 较短的过期时间
     config->matchingConfig_.minConfidenceThreshold = 0.5;  // 较高的置信度阈值
     config->matchingConfig_.minMatchesRequired = 20;       // 较多的最小匹配点数

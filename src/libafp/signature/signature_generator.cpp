@@ -4,8 +4,18 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
+#include <unordered_set>
 
 namespace afp {
+
+// 为std::pair<uint32_t, double>提供哈希函数
+struct PairHash {
+    size_t operator()(const std::pair<uint32_t, double>& p) const {
+        // 组合两个哈希值
+        return std::hash<uint32_t>{}(p.first) ^ 
+               (std::hash<double>{}(p.second) << 1);
+    }
+};
 
 SignatureGenerator::SignatureGenerator(std::shared_ptr<IPerformanceConfig> config)
     : config_(config)
@@ -59,29 +69,40 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
               << channelBuffers.size() << " 个通道, 使用固定大小缓冲区: " 
               << fftSize_ << " 样本" << std::endl;
     
-    // 分别处理每个通道的数据
-    for (auto& [channel, processedBuffer] : channelBuffers) {
-        if (processedBuffer.empty()) {
-            continue;
-        }
+    // 获取hop大小用于后续处理
+    size_t hopSize = config_->getFFTConfig().hopSize;
+    if (hopSize < 64) hopSize = 64; // 确保hop大小不会太小
+    
+    // 找出所有通道中的最大样本数量
+    size_t maxBufferSize = 0;
+    for (const auto& [channel, processedBuffer] : channelBuffers) {
+        maxBufferSize = std::max(maxBufferSize, processedBuffer.size());
+    }
+    
+    // 添加首次调用的标记
+    static bool firstCall = true;
+    
+    // 首先按照时间偏移进行遍历
+    for (size_t offset = 0; offset + fftSize_ <= maxBufferSize; offset += hopSize) {
+        // 当前偏移的实际时间戳
+        double currentTimestamp = startTimestamp + offset / static_cast<double>(sampleRate_);
         
-        // 添加调试信息
-        static bool firstCall = true;
-        if (firstCall && channel == 0) {  // 只为第一个通道添加调试信息
-            AudioDebugger::checkAudioBuffer(processedBuffer.data(), processedBuffer.size(), startTimestamp, firstCall);
-            firstCall = false;
-        }
-        
-        // 初始化处理缓冲区，但不清空已生成的签名
-        buffer_.clear();
-        buffer_.resize(fftSize_, 0.0f);
-        
-        // 循环处理输入缓冲区
-        size_t hopSize = config_->getFFTConfig().hopSize;
-        if (hopSize < 64) hopSize = 64; // 确保hop大小不会太小
-        
-        size_t offset = 0;
-        while (offset + fftSize_ <= processedBuffer.size()) {
+        // 然后处理每个通道在当前时间偏移的数据
+        for (auto& [channel, processedBuffer] : channelBuffers) {
+            if (processedBuffer.empty() || offset + fftSize_ > processedBuffer.size()) {
+                continue;
+            }
+            
+            // 添加调试信息
+            if (firstCall && channel == 0) {  // 只为第一个通道添加调试信息
+                AudioDebugger::checkAudioBuffer(processedBuffer.data(), processedBuffer.size(), startTimestamp, firstCall);
+                firstCall = false;
+            }
+            
+            // 初始化处理缓冲区，但不清空已生成的签名
+            buffer_.clear();
+            buffer_.resize(fftSize_, 0.0f);
+            
             // 提取当前帧
             std::memcpy(buffer_.data(), processedBuffer.data() + offset, fftSize_ * sizeof(float));
             
@@ -99,9 +120,6 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
             if (channel == 0) {
                 AudioDebugger::checkPreEmphasisBuffer(buffer_, offset, fftSize_);
             }
-            
-            // 计算准确的时间戳 - 基于采样率和偏移量
-            double currentTimestamp = startTimestamp + offset / static_cast<double>(sampleRate_);
             
             // 从当前帧中提取峰值
             std::vector<Peak> currentPeaks = extractPeaks(buffer_.data(), currentTimestamp);
@@ -131,9 +149,38 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
                 peakHistory_[channel].erase(peakHistory_[channel].begin(), 
                                    peakHistory_[channel].begin() + (peakHistory_[channel].size() - MAX_PEAK_HISTORY * 10));
             }
+        }
+    }
+    
+    // 对signatures_根据hash+timestamp去重，保持顺序不变
+    {
+        if (signatures_.size() > initialSignatureCount) {
+            // 使用unordered_set作为查询结构以获得O(1)的查找性能
+            std::unordered_set<std::pair<uint32_t, double>, PairHash> uniquePairs;
             
-            // 移动到下一个 hop
-            offset += hopSize;
+            // 创建一个去重后的临时向量
+            std::vector<SignaturePoint> uniqueSignatures;
+            uniqueSignatures.reserve(signatures_.size()); // 预分配内存避免多次重新分配
+            
+            // 从initialSignatureCount开始，只对新增加的签名进行去重
+            for (size_t i = initialSignatureCount; i < signatures_.size(); ++i) {
+                const auto& signature = signatures_[i];
+                std::pair<uint32_t, double> key(signature.hash, signature.timestamp);
+                
+                // 如果这个(hash, timestamp)对尚未出现过，则添加到结果中
+                if (uniquePairs.insert(key).second) {
+                    uniqueSignatures.push_back(signature);
+                }
+            }
+            
+            // 替换原始signatures_向量中新增的部分
+            if (uniqueSignatures.size() < signatures_.size() - initialSignatureCount) {
+                signatures_.erase(signatures_.begin() + initialSignatureCount, signatures_.end());
+                signatures_.insert(signatures_.end(), uniqueSignatures.begin(), uniqueSignatures.end());
+                std::cout << "[Debug] 去重后减少了 " 
+                          << (signatures_.size() - initialSignatureCount - uniqueSignatures.size())
+                          << " 个重复指纹点" << std::endl;
+            }
         }
     }
     
@@ -283,7 +330,7 @@ std::vector<SignaturePoint> SignatureGenerator::generateSignaturesFromPeaks(
                 
                 SignaturePoint signaturePoint;
                 signaturePoint.hash = hash;
-                signaturePoint.timestamp = historyPeak.timestamp; // 使用历史峰值的实际时间戳
+                signaturePoint.timestamp = currentPeak.timestamp; // 使用历史峰值的实际时间戳
                 signaturePoint.frequency = historyPeak.frequency;
                 signaturePoint.amplitude = static_cast<uint32_t>(historyPeak.magnitude * 1000);
                 

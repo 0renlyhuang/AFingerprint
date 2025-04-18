@@ -97,6 +97,7 @@ void generateFingerprints(const std::string& algorithm,
         afp::MediaItem mediaItem;
         mediaItem.setTitle(fs::path(inputFile).stem().string());
         mediaItem.setSubtitle("Generated from PCM file");
+        mediaItem.setChannelCount(defaultFormat.channels());
 
         // 添加到目录
         catalog->addSignature(generator->signature(), mediaItem);
@@ -143,7 +144,7 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
     auto matcher = afp::interface::createMatcher(catalog, config, defaultFormat);
     matcher->setMatchCallback([](const afp::MatchResult& result) {
         std::cout << "Match found:" << std::endl;
-        std::cout << "  Title: " << result.mediaItem.title() << std::endl;
+        std::cout << "  Title: " << result.mediaItem->title() << std::endl;
         std::cout << "  Offset: " << result.offset << " seconds" << std::endl;
         std::cout << "  Confidence: " << result.confidence << std::endl;
         std::cout << "  Matched points: " << result.matchedPoints.size() << std::endl;

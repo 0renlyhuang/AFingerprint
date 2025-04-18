@@ -12,6 +12,38 @@
 
 namespace afp {
 
+struct CandidateSessionKey {
+    uint32_t offset; // ms
+    const std::vector<SignaturePoint>* signature;
+
+    bool operator==(const CandidateSessionKey& other) const {
+        return offset == other.offset && signature == other.signature;
+    }
+};
+
+} // namespace afp
+
+
+namespace std {
+    template <>
+    struct hash<afp::CandidateSessionKey> {
+        size_t operator()(const afp::CandidateSessionKey& k) const {
+            uintptr_t ptr = reinterpret_cast<uintptr_t>(k.signature);
+#if INTPTR_MAX == INT32_MAX  // 32-bit platform
+            uint32_t ptr_low16 = static_cast<uint32_t>(ptr & 0xFFFF);
+            uint32_t offset_low16 = static_cast<uint32_t>(k.offset & 0xFFFF);
+            return static_cast<size_t>((ptr_low16 << 16) | offset_low16);
+#else  // 64-bit platform
+            uint64_t ptr_low32 = static_cast<uint64_t>(ptr & 0xFFFFFFFF);
+            uint64_t offset_low32 = static_cast<uint64_t>(k.offset & 0xFFFFFFFF);
+            return static_cast<size_t>((ptr_low32 << 32) | offset_low32);
+#endif
+        }
+    };
+}
+
+namespace afp {
+
 // 前向声明
 struct MatchResult;
 
@@ -109,7 +141,7 @@ private:
     
 
     struct TargetSignatureInfo2 {
-        const std::shared_ptr<MediaItem> mediaItem;
+        const MediaItem *mediaItem;
         double hashTimestamp;
         const std::vector<SignaturePoint> *signature;
     };
@@ -124,13 +156,22 @@ private:
 
     std::unordered_map< const std::vector<SignaturePoint> *, size_t> signature2SessionCnt_;
 
+    struct DebugMatchInfo {
+        std::string hash;
+        double queryTime;
+        double targetTime;
+        uint32_t offset;
+    };
+    struct MatchingCandidate;
+    std::unordered_map<size_t, std::vector<std::pair<size_t, DebugMatchInfo>>> findDuplicateHashes(const std::vector<std::pair<CandidateSessionKey, MatchingCandidate>>& candidates);
 
     struct MatchingCandidate {
         const TargetSignatureInfo2* targetSignatureInfo; // 目标签名信息
         size_t maxPossibleMatches;          // 最大可能匹配点数 
         size_t matchCount;                  // 匹配点数量
+        std::vector<DebugMatchInfo> matchInfos;           // 匹配信息
         double lastMatchTime;               // 最后一次匹配的时间戳
-        int32_t offset;                     // 时间偏移
+        uint32_t offset;                     // 时间偏移
         bool isMatchCountChanged;           // 是否匹配点数量发生变化
         bool isNotified;                    // 是否已通知
     };

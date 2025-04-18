@@ -7,7 +7,7 @@
 namespace afp {
 
 struct MatchResult {
-    const MediaItem& mediaItem;
+    const MediaItem *mediaItem;
     double offset;           // 时间偏移（秒）
     double confidence;       // 匹配置信度
     std::vector<SignaturePoint> matchedPoints;  // 匹配的点
