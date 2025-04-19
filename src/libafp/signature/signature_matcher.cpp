@@ -160,12 +160,12 @@ void SignatureMatcher::processQuerySignature(
     
     // 计算两个时间戳之间的近似时间偏移, 对于相近的时间戳，统一收敛到一个值，这样能提高系统的鲁棒性
     // TODO: 确认用int32_t存储时，时间的单位是什么
-    auto approximate_time_offset_func = [this](double queryTime, double targetTime) -> uint32_t {
+    auto approximate_time_offset_func = [this](double queryTime, double targetTime) -> int32_t {
         double offset_ms = (targetTime - queryTime) * 1000;
         // 量化到offsetTolerance_的倍数
         int32_t quantized_offset = static_cast<int32_t>(std::round(offset_ms / offsetTolerance_ * 1000)) * offsetTolerance_ * 1000;
         // 确保返回非负值
-        return static_cast<uint32_t>(std::max(0, quantized_offset));
+        return quantized_offset;
     };
 
     auto hash_seesion_key_func = [](const afp::CandidateSessionKey& k) {

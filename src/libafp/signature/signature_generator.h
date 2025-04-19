@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <map>
+#include <deque>
 #include "fft/fft_interface.h"
 #include "debugger/audio_debugger.h"
 #include "afp/iperformance_config.h"
@@ -28,6 +29,12 @@ struct Peak {
     double timestamp;     // 时间戳 (秒)
 };
 
+// 帧结构，存储一个时间帧的峰值点
+struct Frame {
+    std::vector<Peak> peaks;
+    double timestamp;     // 帧时间戳 (秒)
+};
+
 class SignatureGenerator : public ISignatureGenerator {
 public:
     explicit SignatureGenerator(std::shared_ptr<IPerformanceConfig> config);
@@ -51,13 +58,21 @@ private:
     // 从音频帧中提取峰值
     std::vector<Peak> extractPeaks(const float* buffer, double timestamp);
     
-    // 从峰值生成指纹
-    std::vector<SignaturePoint> generateSignaturesFromPeaks(
-        const std::vector<Peak>& currentPeaks, 
-        const std::vector<Peak>& historyPeaks,
+    // 从多帧峰值生成指纹 - 新方法（跨3帧）
+    std::vector<SignaturePoint> generateTripleFrameSignatures(
+        const std::deque<Frame>& frameHistory,
         double currentTimestamp);
+    
+    // 计算三帧组合哈希值
+    uint32_t computeTripleFrameHash(
+        const Peak& anchorPeak,
+        const Peak& targetPeak1,
+        const Peak& targetPeak2);
 
 private:
+    static const size_t FRAME_BUFFER_SIZE = 3;  // 保存3帧用于生成指纹
+    constexpr static const double FRAME_DURATION = 0.1;   // 每帧0.1秒
+
     size_t fftSize_;        // FFT窗口大小
     std::unique_ptr<FFTInterface> fft_;
     std::shared_ptr<IPerformanceConfig> config_;
@@ -71,9 +86,11 @@ private:
     std::vector<float> buffer_;
     std::vector<std::complex<float>> fftBuffer_;
     
-    // 存储历史峰值的缓冲区，用于跨帧生成指纹
-    std::map<uint32_t, std::vector<Peak>> peakHistory_;
-    static const size_t MAX_PEAK_HISTORY = 20; // 保存最近20帧的峰值
+    // 存储每个通道的历史帧的缓冲区，用于跨3帧生成指纹
+    std::map<uint32_t, std::deque<Frame>> frameHistoryMap_;
+    
+    // 上一次处理的时间戳，用于确保按0.1秒分帧
+    double lastProcessedTime_;
 };
 
 } // namespace afp 

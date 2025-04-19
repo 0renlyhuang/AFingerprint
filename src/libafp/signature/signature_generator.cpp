@@ -20,7 +20,8 @@ struct PairHash {
 SignatureGenerator::SignatureGenerator(std::shared_ptr<IPerformanceConfig> config)
     : config_(config)
     , fftSize_(config->getFFTConfig().fftSize)
-    , fft_(FFTFactory::create(fftSize_)) {
+    , fft_(FFTFactory::create(fftSize_))
+    , lastProcessedTime_(-1.0) {
     
     // 初始化汉宁窗
     window_.resize(fftSize_);
@@ -39,6 +40,8 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     format_ = format;
     sampleRate_ = format.sampleRate();
     reader_ = std::make_unique<PCMReader>(format);
+    frameHistoryMap_.clear();
+    lastProcessedTime_ = -1.0;
     return true;
 }
 
@@ -82,73 +85,86 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
     // 添加首次调用的标记
     static bool firstCall = true;
     
-    // 首先按照时间偏移进行遍历
-    for (size_t offset = 0; offset + fftSize_ <= maxBufferSize; offset += hopSize) {
-        // 当前偏移的实际时间戳
-        double currentTimestamp = startTimestamp + offset / static_cast<double>(sampleRate_);
+    // 计算每帧需要的样本数（0.1秒/帧）
+    size_t samplesPerFrame = static_cast<size_t>(FRAME_DURATION * sampleRate_);
+    
+    // 首先根据时间戳进行分帧
+    for (size_t offset = 0; offset + fftSize_ <= maxBufferSize; offset += samplesPerFrame) {
+        // 当前帧的时间戳
+        double frameTimestamp = startTimestamp + offset / static_cast<double>(sampleRate_);
         
-        // 然后处理每个通道在当前时间偏移的数据
-        for (auto& [channel, processedBuffer] : channelBuffers) {
-            if (processedBuffer.empty() || offset + fftSize_ > processedBuffer.size()) {
-                continue;
-            }
-            
-            // 添加调试信息
-            if (firstCall && channel == 0) {  // 只为第一个通道添加调试信息
-                AudioDebugger::checkAudioBuffer(processedBuffer.data(), processedBuffer.size(), startTimestamp, firstCall);
-                firstCall = false;
-            }
-            
-            // 初始化处理缓冲区，但不清空已生成的签名
-            buffer_.clear();
-            buffer_.resize(fftSize_, 0.0f);
-            
-            // 提取当前帧
-            std::memcpy(buffer_.data(), processedBuffer.data() + offset, fftSize_ * sizeof(float));
-            
-            // 检查复制到buffer_中的数据（仅对第一个通道）
-            if (channel == 0) {
-                AudioDebugger::checkCopiedBuffer(buffer_, offset, fftSize_);
-            }
-            
-            // 应用预加重滤波器以强调高频内容
-            for (size_t i = 1; i < fftSize_; ++i) {
-                buffer_[i] -= 0.95f * buffer_[i-1];
-            }
-            
-            // 检查预加重后的数据（仅对第一个通道）
-            if (channel == 0) {
-                AudioDebugger::checkPreEmphasisBuffer(buffer_, offset, fftSize_);
-            }
-            
-            // 从当前帧中提取峰值
-            std::vector<Peak> currentPeaks = extractPeaks(buffer_.data(), currentTimestamp);
-            
-            // 使用当前峰值和历史峰值生成指纹
-            if (!currentPeaks.empty() && !peakHistory_[channel].empty()) {
-                // 生成指纹 - 当前帧的峰值与历史帧的峰值
-                std::vector<SignaturePoint> newPoints = generateSignaturesFromPeaks(
-                    currentPeaks, peakHistory_[channel], currentTimestamp);
+        // 如果这是一个新的有效帧（时间戳增加了0.1秒或这是第一帧）
+        if (lastProcessedTime_ < 0 || frameTimestamp - lastProcessedTime_ >= FRAME_DURATION - 0.01) {
+            // 为每个通道处理当前帧
+            for (auto& [channel, processedBuffer] : channelBuffers) {
+                if (processedBuffer.empty() || offset + fftSize_ > processedBuffer.size()) {
+                    continue;
+                }
                 
-                // 添加生成的指纹
-                signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
+                // 添加调试信息
+                if (firstCall && channel == 0) {  // 只为第一个通道添加调试信息
+                    AudioDebugger::checkAudioBuffer(processedBuffer.data(), processedBuffer.size(), startTimestamp, firstCall);
+                    firstCall = false;
+                }
                 
-                // 调试输出
-                if (!newPoints.empty() && channel == 0) {  // 仅对第一个通道输出调试信息
-                    std::cout << "[Debug] 从通道 " << channel << " 当前帧与历史帧生成了 " << newPoints.size() 
-                              << " 个指纹点，当前时间戳: " << currentTimestamp << std::endl;
+                // 初始化处理缓冲区
+                buffer_.clear();
+                buffer_.resize(fftSize_, 0.0f);
+                
+                // 提取当前帧
+                std::memcpy(buffer_.data(), processedBuffer.data() + offset, fftSize_ * sizeof(float));
+                
+                // 检查复制到buffer_中的数据（仅对第一个通道）
+                if (channel == 0) {
+                    AudioDebugger::checkCopiedBuffer(buffer_, offset, fftSize_);
+                }
+                
+                // 应用预加重滤波器以强调高频内容
+                for (size_t i = 1; i < fftSize_; ++i) {
+                    buffer_[i] -= 0.95f * buffer_[i-1];
+                }
+                
+                // 检查预加重后的数据（仅对第一个通道）
+                if (channel == 0) {
+                    AudioDebugger::checkPreEmphasisBuffer(buffer_, offset, fftSize_);
+                }
+                
+                // 从当前帧中提取峰值（每帧3-5个峰值点）
+                std::vector<Peak> currentPeaks = extractPeaks(buffer_.data(), frameTimestamp);
+                
+                if (!currentPeaks.empty()) {
+                    // 创建新帧并存储其峰值
+                    Frame newFrame;
+                    newFrame.peaks = currentPeaks;
+                    newFrame.timestamp = frameTimestamp;
+                    
+                    // 为当前通道添加帧历史记录
+                    frameHistoryMap_[channel].push_back(newFrame);
+                    
+                    // 保持历史帧队列的大小不超过FRAME_BUFFER_SIZE
+                    while (frameHistoryMap_[channel].size() > FRAME_BUFFER_SIZE) {
+                        frameHistoryMap_[channel].pop_front();
+                    }
+                    
+                    // 当累积了足够数量的帧（3帧）时，生成跨帧指纹
+                    if (frameHistoryMap_[channel].size() == FRAME_BUFFER_SIZE) {
+                        std::vector<SignaturePoint> newPoints = generateTripleFrameSignatures(
+                            frameHistoryMap_[channel], frameTimestamp);
+                        
+                        // 添加生成的指纹
+                        signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
+                        
+                        // 调试输出
+                        if (!newPoints.empty()) {
+                            std::cout << "[Debug] 从通道 " << channel << " 的三帧生成了 " << newPoints.size() 
+                                      << " 个指纹点，当前时间戳: " << frameTimestamp << std::endl;
+                        }
+                    }
                 }
             }
             
-            // 将当前帧的峰值添加到该通道的历史记录中
-            peakHistory_[channel].insert(peakHistory_[channel].end(), currentPeaks.begin(), currentPeaks.end());
-            
-            // 限制历史记录的大小 - 只保留最近的若干帧
-            if (peakHistory_[channel].size() > MAX_PEAK_HISTORY * 10) { // 假设每帧最多10个峰值
-                // 移除最旧的峰值，保留最新的
-                peakHistory_[channel].erase(peakHistory_[channel].begin(), 
-                                   peakHistory_[channel].begin() + (peakHistory_[channel].size() - MAX_PEAK_HISTORY * 10));
-            }
+            // 更新最后处理的时间戳
+            lastProcessedTime_ = frameTimestamp;
         }
     }
     
@@ -188,9 +204,9 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
     std::cout << "[Debug] 本次调用生成了 " << newSignaturesGenerated << " 个指纹点，总共有 " 
               << signatures_.size() << " 个指纹点" << std::endl;
     
-    // 输出每个通道的峰值历史记录数量
-    for (const auto& [channel, history] : peakHistory_) {
-        std::cout << "[Debug] 通道 " << channel << " 的峰值历史记录包含 " << history.size() << " 个峰值点" << std::endl;
+    // 输出每个通道的帧历史记录数量
+    for (const auto& [channel, history] : frameHistoryMap_) {
+        std::cout << "[Debug] 通道 " << channel << " 的帧历史包含 " << history.size() << " 帧" << std::endl;
     }
     
     if (newSignaturesGenerated == 0) {
@@ -281,64 +297,67 @@ std::vector<Peak> SignatureGenerator::extractPeaks(const float* buffer, double t
         return a.magnitude > b.magnitude;
     });
     
-    // 只保留最强的峰值
-    if (peaks.size() > peakConfig.maxPeaksPerFrame) {
-        peaks.resize(peakConfig.maxPeaksPerFrame);
+    // 只保留最强的3-5个峰值
+    const size_t minPeaks = 3;
+    const size_t maxPeaks = 5;
+    
+    // 确保至少有minPeaks个峰值，但不超过maxPeaks个
+    if (peaks.size() > maxPeaks) {
+        peaks.resize(maxPeaks);
+    } else if (peaks.size() < minPeaks) {
+        // 如果峰值太少，添加一些伪峰值以确保我们有足够的点生成指纹
+        size_t originalSize = peaks.size();
+        for (size_t i = originalSize; i < minPeaks; ++i) {
+            // 生成均匀分布的伪峰值
+            Peak fakePeak;
+            fakePeak.frequency = peakConfig.minFreq + 
+                                 (i * (peakConfig.maxFreq - peakConfig.minFreq)) / minPeaks;
+            fakePeak.magnitude = 0.1f; // 低幅度
+            fakePeak.timestamp = timestamp;
+            peaks.push_back(fakePeak);
+        }
     }
     
     return peaks;
 }
 
-std::vector<SignaturePoint> SignatureGenerator::generateSignaturesFromPeaks(
-    const std::vector<Peak>& currentPeaks, 
-    const std::vector<Peak>& historyPeaks,
+// 从三帧峰值生成指纹
+std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
+    const std::deque<Frame>& frameHistory,
     double currentTimestamp) {
     
     std::vector<SignaturePoint> signatures;
-    const auto& sigConfig = config_->getSignatureGenerationConfig();
     
-    // 对每个当前帧的峰值
-    for (const auto& currentPeak : currentPeaks) {
-        // 与符合条件的历史峰值配对
-        for (const auto& historyPeak : historyPeaks) {
-            // 确保是不同时间的峰值（不同的时间戳）
-            if (std::abs(currentPeak.timestamp - historyPeak.timestamp) < 0.001) {
-                continue; // 跳过相同时间戳的峰值
-            }
-            
-            // 计算频率差
-            int32_t freqDelta = currentPeak.frequency - historyPeak.frequency;
-            
-            // 计算时间差 (秒)
-            double timeDelta = currentPeak.timestamp - historyPeak.timestamp;
-            
-            // 确保时间差为正（当前帧总是比历史帧更新）
-            if (timeDelta <= 0 || timeDelta > sigConfig.maxTimeDelta) {
-                continue;
-            }
-            
-            // 检查频率差是否在范围内
-            if (std::abs(freqDelta) >= sigConfig.minFreqDelta && 
-                std::abs(freqDelta) <= sigConfig.maxFreqDelta) {
-                // 将时间差转换为毫秒，并限制在0-63范围内
-                uint32_t deltaTimeMs = static_cast<uint32_t>(timeDelta * 1000) % 64;
+    // 确保我们有3帧
+    if (frameHistory.size() < 3) {
+        return signatures;
+    }
+    
+    // 获取三个连续帧
+    const Frame& frame1 = frameHistory[0]; // 最旧的帧
+    const Frame& frame2 = frameHistory[1]; // 中间帧
+    const Frame& frame3 = frameHistory[2]; // 最新的帧
+    
+    // 从中间帧选择锚点峰值
+    for (const auto& anchorPeak : frame2.peaks) {
+        // 从第一帧（最旧）和第三帧（最新）中选择目标峰值
+        for (const auto& targetPeak1 : frame1.peaks) {
+            for (const auto& targetPeak2 : frame3.peaks) {
+                // 计算三帧组合哈希值
+                uint32_t hash = computeTripleFrameHash(anchorPeak, targetPeak1, targetPeak2);
                 
-                // 计算哈希值 - Shazam风格
-                uint32_t hash = ((historyPeak.frequency & 0x1FFF) << 19) | // 锚点频率
-                             ((currentPeak.frequency & 0x1FFF) << 6) |    // 目标频率
-                             (deltaTimeMs & 0x3F);                       // 时间差
-                
+                // 创建签名点
                 SignaturePoint signaturePoint;
                 signaturePoint.hash = hash;
-                signaturePoint.timestamp = currentPeak.timestamp; // 使用历史峰值的实际时间戳
-                signaturePoint.frequency = historyPeak.frequency;
-                signaturePoint.amplitude = static_cast<uint32_t>(historyPeak.magnitude * 1000);
+                signaturePoint.timestamp = anchorPeak.timestamp; // 使用锚点帧的时间戳
+                signaturePoint.frequency = anchorPeak.frequency;
+                signaturePoint.amplitude = static_cast<uint32_t>(anchorPeak.magnitude * 1000);
                 
                 // 添加调试信息 - 确保std::hex只影响hash值的输出
                 if (signatures.size() < 5) {
-                    std::cout << "[Debug] 生成指纹点: 时间戳=" << historyPeak.timestamp 
+                    std::cout << "[Debug] 生成三帧指纹点: 时间戳=" << anchorPeak.timestamp 
                               << "s, 哈希=0x" << std::hex << hash << std::dec 
-                              << ", 频率=" << historyPeak.frequency << "Hz" << std::endl;
+                              << ", 频率=" << anchorPeak.frequency << "Hz" << std::endl;
                 }
                 
                 signatures.push_back(signaturePoint);
@@ -349,14 +368,39 @@ std::vector<SignaturePoint> SignatureGenerator::generateSignaturesFromPeaks(
     return signatures;
 }
 
+// 计算三帧组合哈希值
+uint32_t SignatureGenerator::computeTripleFrameHash(
+    const Peak& anchorPeak,
+    const Peak& targetPeak1,
+    const Peak& targetPeak2) {
+    
+    // 计算频率差
+    int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency - targetPeak1.frequency);
+    int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency - anchorPeak.frequency);
+    
+    // 计算时间差（毫秒）
+    uint32_t timeDelta1 = static_cast<uint32_t>((anchorPeak.timestamp - targetPeak1.timestamp) * 1000) % 64;
+    uint32_t timeDelta2 = static_cast<uint32_t>((targetPeak2.timestamp - anchorPeak.timestamp) * 1000) % 64;
+    
+    // 组合哈希值 - 使用锚点频率、两个频率差和两个时间差
+    uint32_t hash = ((anchorPeak.frequency & 0xFFF) << 20) |   // 锚点频率 (12位)
+                   ((freqDelta1 & 0x3FF) << 10) |             // 第一个频率差 (10位)
+                   ((freqDelta2 & 0x3FF) << 0) |              // 第二个频率差 (10位)
+                   ((timeDelta1 & 0x3F) << 26) |              // 第一个时间差 (6位)
+                   ((timeDelta2 & 0x3F) << 32);               // 第二个时间差 (6位)
+    
+    return hash;
+}
+
 std::vector<SignaturePoint> SignatureGenerator::signature() const {
     return signatures_;
 }
 
 void SignatureGenerator::resetSignatures() {
     signatures_.clear();
-    peakHistory_.clear(); // 同时清空峰值历史记录
-    std::cout << "[Debug] 已重置所有签名和峰值历史" << std::endl;
+    frameHistoryMap_.clear();
+    lastProcessedTime_ = -1.0;
+    std::cout << "[Debug] 已重置所有签名和帧历史" << std::endl;
 }
 
 } // namespace afp 

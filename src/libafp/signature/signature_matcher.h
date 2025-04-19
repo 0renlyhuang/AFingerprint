@@ -13,7 +13,7 @@
 namespace afp {
 
 struct CandidateSessionKey {
-    uint32_t offset; // ms
+    int32_t offset; // ms
     const std::vector<SignaturePoint>* signature;
 
     bool operator==(const CandidateSessionKey& other) const {
@@ -160,7 +160,7 @@ private:
         std::string hash;
         double queryTime;
         double targetTime;
-        uint32_t offset;
+        int32_t offset;
     };
     struct MatchingCandidate;
     std::unordered_map<size_t, std::vector<std::pair<size_t, DebugMatchInfo>>> findDuplicateHashes(const std::vector<std::pair<CandidateSessionKey, MatchingCandidate>>& candidates);
@@ -171,7 +171,7 @@ private:
         size_t matchCount;                  // 匹配点数量
         std::vector<DebugMatchInfo> matchInfos;           // 匹配信息
         double lastMatchTime;               // 最后一次匹配的时间戳
-        uint32_t offset;                     // 时间偏移
+        int32_t offset;                     // 时间偏移
         bool isMatchCountChanged;           // 是否匹配点数量发生变化
         bool isNotified;                    // 是否已通知
     };
