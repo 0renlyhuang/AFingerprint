@@ -20,8 +20,10 @@ struct PairHash {
 SignatureGenerator::SignatureGenerator(std::shared_ptr<IPerformanceConfig> config)
     : config_(config)
     , fftSize_(config->getFFTConfig().fftSize)
-    , fft_(FFTFactory::create(fftSize_))
-    , lastProcessedTime_(-1.0) {
+    , samplesPerFrame_(0)  // 将在init中设置
+    , samplesPerShortFrame_(0)  // 将在init中设置
+    , shortFramesPerLongFrame_(0)  // 将在init中设置
+    , fft_(FFTFactory::create(fftSize_)) {
     
     // 初始化汉宁窗
     window_.resize(fftSize_);
@@ -40,8 +42,32 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     format_ = format;
     sampleRate_ = format.sampleRate();
     reader_ = std::make_unique<PCMReader>(format);
+    
+    // 计算每个长帧需要的样本数（0.1秒/帧）
+    samplesPerFrame_ = static_cast<size_t>(FRAME_DURATION * sampleRate_);
+    
+    // 计算每个短帧需要的样本数（0.02秒/短帧）
+    samplesPerShortFrame_ = static_cast<size_t>(SHORT_FRAME_DURATION * sampleRate_);
+    
+    // 计算每个长帧包含的短帧数
+    shortFramesPerLongFrame_ = static_cast<size_t>(FRAME_DURATION / SHORT_FRAME_DURATION);
+    
+    // 确保samplesPerShortFrame_至少等于fftSize_
+    if (samplesPerShortFrame_ < fftSize_) {
+        samplesPerShortFrame_ = fftSize_;
+    }
+    
+    // 清空所有缓冲区和历史记录
     frameHistoryMap_.clear();
-    lastProcessedTime_ = -1.0;
+    channelBuffers_.clear();
+    fftResultsMap_.clear();
+    
+    std::cout << "[Debug] 初始化完成: 采样率=" << sampleRate_ 
+              << "Hz, 每长帧样本数=" << samplesPerFrame_
+              << ", 每短帧样本数=" << samplesPerShortFrame_
+              << ", 每长帧包含短帧数=" << shortFramesPerLongFrame_
+              << ", FFT大小=" << fftSize_ << std::endl;
+              
     return true;
 }
 
@@ -56,115 +82,71 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
     // 记录处理前的签名数量，用于返回是否生成了新的签名
     size_t initialSignatureCount = signatures_.size();
     
-    // 处理PCM数据，按通道分离数据
-    std::map<uint32_t, std::vector<float>> channelBuffers;
+    // 临时缓冲区，用于存储PCM读取器处理的数据
+    std::map<uint32_t, std::vector<float>> tempChannelBuffers;
     
     // 处理所有通道的数据
     reader_->process(buffer, bufferSize, [&](float sample, uint32_t channel) {
-        channelBuffers[channel].push_back(sample);
+        tempChannelBuffers[channel].push_back(sample);
     });
     
-    if (channelBuffers.empty()) {
+    if (tempChannelBuffers.empty()) {
         return false;
     }
     
     std::cout << "处理音频数据: " << bufferSize / format_.frameSize() << " 样本, "
-              << channelBuffers.size() << " 个通道, 使用固定大小缓冲区: " 
-              << fftSize_ << " 样本" << std::endl;
+              << tempChannelBuffers.size() << " 个通道, 每帧样本数: " 
+              << samplesPerFrame_ << std::endl;
     
-    // 获取hop大小用于后续处理
-    size_t hopSize = config_->getFFTConfig().hopSize;
-    if (hopSize < 64) hopSize = 64; // 确保hop大小不会太小
-    
-    // 找出所有通道中的最大样本数量
-    size_t maxBufferSize = 0;
-    for (const auto& [channel, processedBuffer] : channelBuffers) {
-        maxBufferSize = std::max(maxBufferSize, processedBuffer.size());
-    }
-    
-    // 添加首次调用的标记
-    static bool firstCall = true;
-    
-    // 计算每帧需要的样本数（0.1秒/帧）
-    size_t samplesPerFrame = static_cast<size_t>(FRAME_DURATION * sampleRate_);
-    
-    // 首先根据时间戳进行分帧
-    for (size_t offset = 0; offset + fftSize_ <= maxBufferSize; offset += samplesPerFrame) {
-        // 当前帧的时间戳
-        double frameTimestamp = startTimestamp + offset / static_cast<double>(sampleRate_);
+    // 处理每个通道的数据
+    for (auto& [channel, samples] : tempChannelBuffers) {
+        // 确保当前通道有缓冲区
+        if (channelBuffers_.find(channel) == channelBuffers_.end()) {
+            channelBuffers_[channel].samples.resize(samplesPerShortFrame_, 0.0f);
+            channelBuffers_[channel].consumed = 0;
+            channelBuffers_[channel].timestamp = startTimestamp;
+            
+            // 初始化该通道的FFT结果缓冲区
+            fftResultsMap_[channel].clear();
+        }
         
-        // 如果这是一个新的有效帧（时间戳增加了0.1秒或这是第一帧）
-        if (lastProcessedTime_ < 0 || frameTimestamp - lastProcessedTime_ >= FRAME_DURATION - 0.01) {
-            // 为每个通道处理当前帧
-            for (auto& [channel, processedBuffer] : channelBuffers) {
-                if (processedBuffer.empty() || offset + fftSize_ > processedBuffer.size()) {
-                    continue;
-                }
+        ChannelBuffer& channelBuffer = channelBuffers_[channel];
+        
+        // 将新样本添加到通道缓冲区
+        size_t sampleIndex = 0;
+        while (sampleIndex < samples.size()) {
+            // 填充通道缓冲区直到满一个短帧
+            size_t remainingSpace = samplesPerShortFrame_ - channelBuffer.consumed;
+            size_t samplesToAdd = std::min(remainingSpace, samples.size() - sampleIndex);
+            
+            // 复制样本到缓冲区
+            std::memcpy(channelBuffer.samples.data() + channelBuffer.consumed, 
+                      samples.data() + sampleIndex, 
+                      samplesToAdd * sizeof(float));
+            
+            channelBuffer.consumed += samplesToAdd;
+            sampleIndex += samplesToAdd;
+            
+            // 如果缓冲区已满足一个短帧的数据量，处理短帧
+            if (channelBuffer.consumed == samplesPerShortFrame_) {
+                processShortFrame(channelBuffer.samples.data(), channel, channelBuffer.timestamp);
                 
-                // 添加调试信息
-                if (firstCall && channel == 0) {  // 只为第一个通道添加调试信息
-                    AudioDebugger::checkAudioBuffer(processedBuffer.data(), processedBuffer.size(), startTimestamp, firstCall);
-                    firstCall = false;
-                }
+                // 重置缓冲区
+                channelBuffer.consumed = 0;
                 
-                // 初始化处理缓冲区
-                buffer_.clear();
-                buffer_.resize(fftSize_, 0.0f);
+                // 更新时间戳为下一个短帧的开始时间
+                channelBuffer.timestamp += SHORT_FRAME_DURATION;
                 
-                // 提取当前帧
-                std::memcpy(buffer_.data(), processedBuffer.data() + offset, fftSize_ * sizeof(float));
-                
-                // 检查复制到buffer_中的数据（仅对第一个通道）
-                if (channel == 0) {
-                    AudioDebugger::checkCopiedBuffer(buffer_, offset, fftSize_);
-                }
-                
-                // 应用预加重滤波器以强调高频内容
-                for (size_t i = 1; i < fftSize_; ++i) {
-                    buffer_[i] -= 0.95f * buffer_[i-1];
-                }
-                
-                // 检查预加重后的数据（仅对第一个通道）
-                if (channel == 0) {
-                    AudioDebugger::checkPreEmphasisBuffer(buffer_, offset, fftSize_);
-                }
-                
-                // 从当前帧中提取峰值（每帧3-5个峰值点）
-                std::vector<Peak> currentPeaks = extractPeaks(buffer_.data(), frameTimestamp);
-                
-                if (!currentPeaks.empty()) {
-                    // 创建新帧并存储其峰值
-                    Frame newFrame;
-                    newFrame.peaks = currentPeaks;
-                    newFrame.timestamp = frameTimestamp;
+                // 检查是否积累了足够的短帧FFT结果来处理一个长帧
+                if (fftResultsMap_[channel].size() >= shortFramesPerLongFrame_) {
+                    // 处理长帧（从短帧FFT结果中提取峰值）
+                    processLongFrame(channel, fftResultsMap_[channel].front().timestamp);
                     
-                    // 为当前通道添加帧历史记录
-                    frameHistoryMap_[channel].push_back(newFrame);
-                    
-                    // 保持历史帧队列的大小不超过FRAME_BUFFER_SIZE
-                    while (frameHistoryMap_[channel].size() > FRAME_BUFFER_SIZE) {
-                        frameHistoryMap_[channel].pop_front();
-                    }
-                    
-                    // 当累积了足够数量的帧（3帧）时，生成跨帧指纹
-                    if (frameHistoryMap_[channel].size() == FRAME_BUFFER_SIZE) {
-                        std::vector<SignaturePoint> newPoints = generateTripleFrameSignatures(
-                            frameHistoryMap_[channel], frameTimestamp);
-                        
-                        // 添加生成的指纹
-                        signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
-                        
-                        // 调试输出
-                        if (!newPoints.empty()) {
-                            std::cout << "[Debug] 从通道 " << channel << " 的三帧生成了 " << newPoints.size() 
-                                      << " 个指纹点，当前时间戳: " << frameTimestamp << std::endl;
-                        }
-                    }
+                    // 移除已处理的短帧FFT结果
+                    fftResultsMap_[channel].erase(fftResultsMap_[channel].begin(), 
+                                                fftResultsMap_[channel].begin() + shortFramesPerLongFrame_);
                 }
             }
-            
-            // 更新最后处理的时间戳
-            lastProcessedTime_ = frameTimestamp;
         }
     }
     
@@ -204,88 +186,139 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
     std::cout << "[Debug] 本次调用生成了 " << newSignaturesGenerated << " 个指纹点，总共有 " 
               << signatures_.size() << " 个指纹点" << std::endl;
     
+    // 输出每个通道的缓冲区状态
+    for (const auto& [channel, buffer] : channelBuffers_) {
+        std::cout << "[Debug] 通道 " << channel << " 的缓冲区已消费 " 
+                  << buffer.consumed << "/" << samplesPerShortFrame_ 
+                  << " 样本，缓冲区时间戳: " << buffer.timestamp << std::endl;
+    }
+    
     // 输出每个通道的帧历史记录数量
     for (const auto& [channel, history] : frameHistoryMap_) {
         std::cout << "[Debug] 通道 " << channel << " 的帧历史包含 " << history.size() << " 帧" << std::endl;
-    }
-    
-    if (newSignaturesGenerated == 0) {
-        std::cerr << "本次调用未能生成有效指纹，使用备用方案" << std::endl;
-        // 如果本次调用没有生成有效指纹，创建一个备用指纹
-        SignaturePoint fallbackPoint;
-        fallbackPoint.hash = 0x12345678; // 使用一个固定的哈希值
-        fallbackPoint.timestamp = startTimestamp;
-        fallbackPoint.frequency = 1000;
-        fallbackPoint.amplitude = 100;
-        signatures_.push_back(fallbackPoint);
-        std::cout << "[Debug] 添加了一个备用指纹点" << std::endl;
     }
 
     return newSignaturesGenerated > 0 || signatures_.size() > initialSignatureCount;
 }
 
-// 从音频帧中提取峰值
-std::vector<Peak> SignatureGenerator::extractPeaks(const float* buffer, double timestamp) {
-    std::vector<Peak> peaks;
+// 处理短帧音频数据，执行FFT分析
+void SignatureGenerator::processShortFrame(const float* frameBuffer, 
+                                        uint32_t channel,
+                                        double frameTimestamp) {
+    static bool firstCall = true;
+    
+    // 初始化处理缓冲区
+    buffer_.clear();
+    buffer_.resize(fftSize_, 0.0f);
+    
+    // 将短帧数据复制到处理缓冲区
+    std::memcpy(buffer_.data(), frameBuffer, fftSize_ * sizeof(float));
+    
+    // 添加调试信息
+    if (firstCall && channel == 0) {  // 只为第一个通道添加调试信息
+        AudioDebugger::checkAudioBuffer(frameBuffer, samplesPerShortFrame_, frameTimestamp, firstCall);
+        AudioDebugger::checkCopiedBuffer(buffer_, 0, fftSize_);
+        firstCall = false;
+    }
+    
+    // 应用预加重滤波器以强调高频内容
+    for (size_t i = 1; i < fftSize_; ++i) {
+        buffer_[i] -= 0.95f * buffer_[i-1];
+    }
+    
+    // 检查预加重后的数据（仅对第一个通道）
+    if (channel == 0) {
+        AudioDebugger::checkPreEmphasisBuffer(buffer_, 0, fftSize_);
+    }
     
     // 应用窗函数
     std::vector<float> windowed(fftSize_);
     for (size_t i = 0; i < fftSize_; ++i) {
-        windowed[i] = buffer[i] * window_[i];
+        windowed[i] = buffer_[i] * window_[i];
     }
     
     // 执行FFT
     if (!fft_->transform(windowed.data(), fftBuffer_.data())) {
-        return peaks;
+        return;
     }
     
-    // 计算幅度谱
-    std::vector<float> magnitudes(fftSize_ / 2);
-    std::vector<float> frequencies(fftSize_ / 2);
+    // 创建FFT结果结构
+    FFTResult fftResult;
+    fftResult.magnitudes.resize(fftSize_ / 2);
+    fftResult.frequencies.resize(fftSize_ / 2);
+    fftResult.timestamp = frameTimestamp;
     
     float maxMagnitude = 0.0001f; // 避免除零
     
+    // 计算幅度谱和频率
     for (size_t i = 0; i < fftSize_ / 2; ++i) {
         // 计算复数的模
         float magnitude = std::abs(fftBuffer_[i]);
         
         // 对数频谱
-        magnitudes[i] = magnitude > 0.00001f ? 20.0f * std::log10(magnitude) + 100.0f : 0;
+        fftResult.magnitudes[i] = magnitude > 0.00001f ? 20.0f * std::log10(magnitude) + 100.0f : 0;
         
         // 更新最大值
-        if (magnitudes[i] > maxMagnitude) {
-            maxMagnitude = magnitudes[i];
+        if (fftResult.magnitudes[i] > maxMagnitude) {
+            maxMagnitude = fftResult.magnitudes[i];
         }
         
         // 计算每个bin对应的频率
-        frequencies[i] = i * sampleRate_ / fftSize_;
+        fftResult.frequencies[i] = i * sampleRate_ / fftSize_;
     }
     
     // 正规化幅度谱
     for (size_t i = 0; i < fftSize_ / 2; ++i) {
-        magnitudes[i] /= maxMagnitude;
+        fftResult.magnitudes[i] /= maxMagnitude;
+    }
+    
+    // 将FFT结果添加到通道的FFT结果缓冲区
+    fftResultsMap_[channel].push_back(std::move(fftResult));
+}
+
+// 从短帧FFT结果缓冲区中提取峰值
+std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
+    const std::vector<FFTResult>& fftResults,
+    double longFrameTimestamp) {
+    
+    std::vector<Peak> peaks;
+    
+    if (fftResults.empty()) {
+        return peaks;
+    }
+    
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    
+    // 使用峰值保留法而非平均法 - 保留每个频率bin的最大值，增强瞬态信号特征
+    std::vector<float> maxMagnitudes(fftSize_ / 2, 0.0f);
+    std::vector<float> frequencies = fftResults[0].frequencies; // 频率对于所有FFT是一致的
+    
+    // 对每个频率bin，保留所有短帧中的最大值
+    for (const auto& fftResult : fftResults) {
+        for (size_t i = 0; i < fftSize_ / 2; ++i) {
+            maxMagnitudes[i] = std::max(maxMagnitudes[i], fftResult.magnitudes[i]);
+        }
     }
     
     // 查找峰值 - 只选取强度足够的本地最大值
-    const auto& peakConfig = config_->getPeakDetectionConfig();
     for (size_t i = peakConfig.localMaxRange; i < fftSize_ / 2 - peakConfig.localMaxRange; ++i) {
         // 检查频率范围
         if (frequencies[i] >= peakConfig.minFreq && frequencies[i] <= peakConfig.maxFreq) {
             // 检查是否是本地最大值
             bool isPeak = true;
             for (size_t j = 1; j <= peakConfig.localMaxRange; ++j) {
-                if (magnitudes[i] <= magnitudes[i-j] || magnitudes[i] <= magnitudes[i+j]) {
+                if (maxMagnitudes[i] <= maxMagnitudes[i-j] || maxMagnitudes[i] <= maxMagnitudes[i+j]) {
                     isPeak = false;
                     break;
                 }
             }
             
             // 检查是否超过最小幅度阈值
-            if (isPeak && magnitudes[i] >= peakConfig.minPeakMagnitude) {
+            if (isPeak && maxMagnitudes[i] >= peakConfig.minPeakMagnitude) {
                 Peak peak;
                 peak.frequency = static_cast<uint32_t>(frequencies[i]);
-                peak.magnitude = magnitudes[i];
-                peak.timestamp = timestamp;
+                peak.magnitude = maxMagnitudes[i];
+                peak.timestamp = longFrameTimestamp;
                 
                 peaks.push_back(peak);
             }
@@ -297,28 +330,60 @@ std::vector<Peak> SignatureGenerator::extractPeaks(const float* buffer, double t
         return a.magnitude > b.magnitude;
     });
     
-    // 只保留最强的3-5个峰值
-    const size_t minPeaks = 3;
-    const size_t maxPeaks = 5;
-    
     // 确保至少有minPeaks个峰值，但不超过maxPeaks个
-    if (peaks.size() > maxPeaks) {
-        peaks.resize(maxPeaks);
-    } else if (peaks.size() < minPeaks) {
-        // 如果峰值太少，添加一些伪峰值以确保我们有足够的点生成指纹
-        size_t originalSize = peaks.size();
-        for (size_t i = originalSize; i < minPeaks; ++i) {
-            // 生成均匀分布的伪峰值
-            Peak fakePeak;
-            fakePeak.frequency = peakConfig.minFreq + 
-                                 (i * (peakConfig.maxFreq - peakConfig.minFreq)) / minPeaks;
-            fakePeak.magnitude = 0.1f; // 低幅度
-            fakePeak.timestamp = timestamp;
-            peaks.push_back(fakePeak);
-        }
+    if (peaks.size() > peakConfig.maxPeaksPerFrame) {
+        peaks.resize(peakConfig.maxPeaksPerFrame);
     }
     
     return peaks;
+}
+
+// 处理长帧音频数据，从短帧FFT结果中提取峰值
+void SignatureGenerator::processLongFrame(
+                               uint32_t channel,
+                               double frameTimestamp) {
+    
+    // 确保有足够的短帧FFT结果用于提取峰值
+    if (fftResultsMap_[channel].size() < shortFramesPerLongFrame_) {
+        return;
+    }
+    
+    // 获取该通道的所有短帧FFT结果
+    std::vector<FFTResult> fftResults(fftResultsMap_[channel].begin(), 
+                                      fftResultsMap_[channel].begin() + shortFramesPerLongFrame_);
+    
+    // 从短帧FFT结果中提取峰值
+    std::vector<Peak> currentPeaks = extractPeaksFromFFTResults(fftResults, frameTimestamp);
+    
+    if (!currentPeaks.empty()) {
+        // 创建新帧并存储其峰值
+        Frame newFrame;
+        newFrame.peaks = currentPeaks;
+        newFrame.timestamp = frameTimestamp;
+        
+        // 为当前通道添加帧历史记录
+        frameHistoryMap_[channel].push_back(newFrame);
+        
+        // 保持历史帧队列的大小不超过FRAME_BUFFER_SIZE
+        while (frameHistoryMap_[channel].size() > FRAME_BUFFER_SIZE) {
+            frameHistoryMap_[channel].pop_front();
+        }
+        
+        // 当累积了足够数量的帧（3帧）时，生成跨帧指纹
+        if (frameHistoryMap_[channel].size() == FRAME_BUFFER_SIZE) {
+            std::vector<SignaturePoint> newPoints = generateTripleFrameSignatures(
+                frameHistoryMap_[channel], frameTimestamp);
+            
+            // 添加生成的指纹
+            signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
+            
+            // 调试输出
+            if (!newPoints.empty()) {
+                std::cout << "[Debug] 从通道 " << channel << " 的三帧生成了 " << newPoints.size() 
+                          << " 个指纹点，当前时间戳: " << frameTimestamp << std::endl;
+            }
+        }
+    }
 }
 
 // 从三帧峰值生成指纹
@@ -399,8 +464,9 @@ std::vector<SignaturePoint> SignatureGenerator::signature() const {
 void SignatureGenerator::resetSignatures() {
     signatures_.clear();
     frameHistoryMap_.clear();
-    lastProcessedTime_ = -1.0;
-    std::cout << "[Debug] 已重置所有签名和帧历史" << std::endl;
+    channelBuffers_.clear();
+    fftResultsMap_.clear();
+    std::cout << "[Debug] 已重置所有签名、帧历史和通道缓冲区" << std::endl;
 }
 
 } // namespace afp 

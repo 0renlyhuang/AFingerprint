@@ -120,6 +120,7 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
         std::cerr << "Input file does not exist: " << inputFile << std::endl;
         return;
     }
+    std::cout << "开始匹配文件: " << inputFile << std::endl;
 
     // 创建配置和目录
     auto config = afp::interface::createPerformanceConfig(afp::PlatformType::Mobile);

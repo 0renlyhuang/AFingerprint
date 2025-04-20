@@ -190,6 +190,7 @@ void SignatureMatcher::processQuerySignature(
     }
     
     int queryPointprint = 0;
+    int queryPointHitCount = 0;
 
     // step1 add/update candidate
     for (const auto& queryPoint : querySignature) {
@@ -199,6 +200,7 @@ void SignatureMatcher::processQuerySignature(
         if (targetIt == hash2TargetSignaturesInfoMap_.end()) {
             continue;
         }
+        ++queryPointHitCount;
 
         const auto& targetSignaturesInfoList = targetIt->second;
         for (const auto& targetSignaturesInfo : targetSignaturesInfoList) {
@@ -245,7 +247,7 @@ void SignatureMatcher::processQuerySignature(
                           << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
                           << ", foundCandidate: " << foundCandidate
                           << ", matchcount: " << candidate.matchCount << std::endl;
-            }
+                    }
 
                     continue;
                 } 
@@ -291,11 +293,11 @@ void SignatureMatcher::processQuerySignature(
                           << ", offset: " << offset 
                           << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
                           << ", matchcount: " << candidate.matchCount << std::endl;
-            }
+                }
             }
         }
     }
-
+    std::cout << "rrr queryPointHitCount: " << queryPointHitCount << std::endl;
 
     // step2 evaluate candidate
     double currentTimestamp = querySignature.back().timestamp;

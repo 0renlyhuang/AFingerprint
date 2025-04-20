@@ -35,6 +35,22 @@ struct Frame {
     double timestamp;     // 帧时间戳 (秒)
 };
 
+// FFT结果结构，存储短帧的FFT结果
+struct FFTResult {
+    std::vector<float> magnitudes;
+    std::vector<float> frequencies;
+    double timestamp;     // 短帧时间戳 (秒)
+};
+
+// 通道缓冲区结构，存储一个通道的数据并跟踪已消费样本数
+struct ChannelBuffer {
+    std::vector<float> samples;  // 固定大小为一帧所需样本数
+    size_t consumed;             // 已经消费的样本数
+    double timestamp;            // 第一个样本的时间戳
+    
+    ChannelBuffer() : consumed(0), timestamp(0.0) {}
+};
+
 class SignatureGenerator : public ISignatureGenerator {
 public:
     explicit SignatureGenerator(std::shared_ptr<IPerformanceConfig> config);
@@ -55,9 +71,16 @@ public:
     void resetSignatures() override;
 
 private:
-    // 从音频帧中提取峰值
-    std::vector<Peak> extractPeaks(const float* buffer, double timestamp);
-    
+    // 处理短帧FFT分析
+    void processShortFrame(const float* frameBuffer, 
+                          uint32_t channel,
+                          double frameTimestamp);
+                          
+    // 从短帧FFT结果缓冲区中提取峰值
+    std::vector<Peak> extractPeaksFromFFTResults(
+        const std::vector<FFTResult>& fftResults,
+        double longFrameTimestamp);
+
     // 从多帧峰值生成指纹 - 新方法（跨3帧）
     std::vector<SignaturePoint> generateTripleFrameSignatures(
         const std::deque<Frame>& frameHistory,
@@ -69,11 +92,21 @@ private:
         const Peak& targetPeak1,
         const Peak& targetPeak2);
 
+    // 处理长帧音频数据，从短帧FFT结果中提取峰值
+    void processLongFrame(
+                     uint32_t channel,
+                     double frameTimestamp);
+
 private:
     static const size_t FRAME_BUFFER_SIZE = 3;  // 保存3帧用于生成指纹
-    constexpr static const double FRAME_DURATION = 0.1;   // 每帧0.1秒
+    constexpr static const double FRAME_DURATION = 0.1;   // 长帧持续时间（0.1秒）
+    constexpr static const double SHORT_FRAME_DURATION = 0.02;  // 短帧持续时间（0.02秒）
 
     size_t fftSize_;        // FFT窗口大小
+    size_t samplesPerFrame_; // 每帧所需的样本数量
+    size_t samplesPerShortFrame_; // 每个短帧所需的样本数量
+    size_t shortFramesPerLongFrame_; // 每个长帧包含的短帧数量
+    
     std::unique_ptr<FFTInterface> fft_;
     std::shared_ptr<IPerformanceConfig> config_;
     PCMFormat format_;
@@ -89,8 +122,11 @@ private:
     // 存储每个通道的历史帧的缓冲区，用于跨3帧生成指纹
     std::map<uint32_t, std::deque<Frame>> frameHistoryMap_;
     
-    // 上一次处理的时间戳，用于确保按0.1秒分帧
-    double lastProcessedTime_;
+    // 每个通道的固定大小缓冲区，用于存储正好一帧长度的数据
+    std::map<uint32_t, ChannelBuffer> channelBuffers_;
+    
+    // 每个通道的短帧FFT结果缓冲区
+    std::map<uint32_t, std::vector<FFTResult>> fftResultsMap_;
 };
 
 } // namespace afp 

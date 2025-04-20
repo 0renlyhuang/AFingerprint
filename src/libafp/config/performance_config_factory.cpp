@@ -24,8 +24,8 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->fftConfig_.hopSize = 441;     // 0.1秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
-    config->peakDetectionConfig_.localMaxRange = 2;        // 较小的本地最大值范围
-    config->peakDetectionConfig_.maxPeaksPerFrame = 5;     // 每帧最多5个峰值
+    config->peakDetectionConfig_.localMaxRange = 5;        // 较小的本地最大值范围
+    config->peakDetectionConfig_.maxPeaksPerFrame = 7;     // 每帧最多7个峰值
     config->peakDetectionConfig_.minPeakMagnitude = 0.1f;  // 较低的峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 5000;           // 最大频率
@@ -39,8 +39,8 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->matchingConfig_.maxCandidates = 20;            // 较少的候选结果
     config->matchingConfig_.matchExpireTime = 3.0;         // 较短的过期时间
     config->matchingConfig_.minConfidenceThreshold = 0.5;  // 较高的置信度阈值
-    config->matchingConfig_.minMatchesRequired = 10;       // 减少最小匹配点数要求
-    config->matchingConfig_.offsetTolerance = 0.15;        // 较大的时间偏移容忍度
+    config->matchingConfig_.minMatchesRequired = 5;       // 减少最小匹配点数要求
+    config->matchingConfig_.offsetTolerance = 0.3;        // 较大的时间偏移容忍度
     
     return config;
 }
