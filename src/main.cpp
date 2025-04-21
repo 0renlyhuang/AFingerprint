@@ -5,7 +5,10 @@
 #include <string>
 #include <iomanip>
 #include "afp/afp_interface.h"
-
+#include "debugger/visualization.h"
+#include "signature/signature_generator.h"
+#include "signature/signature_matcher.h"
+#include "matcher/matcher.h"
 namespace fs = std::filesystem;
 
 // 默认音频格式：16位有符号整数，小端序，单声道，44100Hz
@@ -55,7 +58,8 @@ std::vector<uint8_t> readPCMFile(const std::string& filename) {
 // 生成指纹模式
 void generateFingerprints(const std::string& algorithm, 
                          const std::string& outputFile,
-                         const std::vector<std::string>& inputFiles) {
+                         const std::vector<std::string>& inputFiles,
+                         bool generateVisualizations = false) {
     // 创建配置和目录
     auto config = afp::interface::createPerformanceConfig(afp::PlatformType::Mobile);
     auto catalog = afp::interface::createCatalog();
@@ -80,6 +84,16 @@ void generateFingerprints(const std::string& algorithm,
 
         // 创建生成器并生成指纹
         auto generator = afp::interface::createSignatureGenerator(config);
+        
+        // Enable visualization if requested
+        if (generateVisualizations) {
+            auto* generatorImpl = dynamic_cast<afp::SignatureGenerator*>(generator.get());
+            if (generatorImpl) {
+                generatorImpl->enableVisualization(true);
+                generatorImpl->setVisualizationTitle(fs::path(inputFile).stem().string());
+            }
+        }
+        
         if (!generator->init(defaultFormat)) {
             std::cerr << "Failed to initialize generator" << std::endl;
             continue;
@@ -101,6 +115,16 @@ void generateFingerprints(const std::string& algorithm,
 
         // 添加到目录
         catalog->addSignature(generator->signature(), mediaItem);
+        
+        // Save visualization if requested
+        if (generateVisualizations) {
+            auto* generatorImpl = dynamic_cast<afp::SignatureGenerator*>(generator.get());
+            if (generatorImpl) {
+                std::string vizFilename = fs::path(inputFile).stem().string() + "_fingerprint.json";
+                std::cout << "Generating visualization: " << vizFilename << std::endl;
+                generatorImpl->saveVisualization(vizFilename);
+            }
+        }
     }
 
     // 保存到文件
@@ -114,7 +138,7 @@ void generateFingerprints(const std::string& algorithm,
 }
 
 // 匹配指纹模式
-void matchFingerprints(const std::string& inputFile, const std::string& catalogFile) {
+void matchFingerprints(const std::string& inputFile, const std::string& catalogFile, bool generateVisualizations = false) {
     // 检查文件是否存在
     if (!fs::exists(inputFile)) {
         std::cerr << "Input file does not exist: " << inputFile << std::endl;
@@ -135,14 +159,54 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
     std::cout << "已加载指纹数据库: " << catalogFile << std::endl;
     std::cout << "数据库中指纹数量: " << catalog->signatures().size() << std::endl;
     
+    // Store source fingerprint visualization data if visualization is enabled
+    afp::VisualizationData sourceVizData;
+    bool sourceVizEnabled = false;
+    
     // 打印加载的指纹信息
     for (size_t i = 0; i < catalog->signatures().size(); ++i) {
         std::cout << "数据库中指纹 #" << i << " (" << catalog->mediaItems()[i].title() << "):" << std::endl;
         printSignature(catalog->signatures()[i], "数据库");
+        
+        // If visualization is enabled, create source visualization data
+        if (generateVisualizations && i == 0) {  // Just using the first signature for simplicity
+            sourceVizEnabled = true;
+            sourceVizData.title = catalog->mediaItems()[i].title();
+            sourceVizData.duration = 0.0;
+            
+            // Add fingerprint points
+            for (const auto& point : catalog->signatures()[i]) {
+                sourceVizData.fingerprintPoints.emplace_back(point.frequency, point.timestamp, point.hash);
+                sourceVizData.allPeaks.emplace_back(point.frequency, point.timestamp);
+                
+                // Update duration
+                if (point.timestamp > sourceVizData.duration) {
+                    sourceVizData.duration = point.timestamp;
+                }
+            }
+            
+            // Add buffer to duration
+            sourceVizData.duration += 1.0;
+            
+            // Save source visualization
+            std::string sourceVizFilename = catalog->mediaItems()[i].title() + "_source_fingerprint.json";
+            afp::Visualizer::saveVisualization(sourceVizData, sourceVizFilename);
+            afp::Visualizer::generateExtractionPlot(sourceVizData, sourceVizFilename);
+        }
     }
 
     // 创建匹配器
     auto matcher = afp::interface::createMatcher(catalog, config, defaultFormat);
+    
+    // Enable visualization if requested
+    if (generateVisualizations) {
+        auto* matcherImpl = dynamic_cast<afp::Matcher*>(matcher.get());
+        if (matcherImpl) {
+            matcherImpl->signatureMatcher_->enableVisualization(true);
+            matcherImpl->signatureMatcher_->setVisualizationTitle(fs::path(inputFile).stem().string());
+        }
+    }
+    
     matcher->setMatchCallback([](const afp::MatchResult& result) {
         std::cout << "Match found:" << std::endl;
         std::cout << "  Title: " << result.mediaItem->title() << std::endl;
@@ -168,17 +232,42 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
         std::cerr << "Failed to match signature" << std::endl;
         return;
     }
+    
+    // Generate visualizations if requested
+    if (generateVisualizations) {
+        auto* matcherImpl = dynamic_cast<afp::Matcher*>(matcher.get());
+        if (matcherImpl) {
+            // Generate query visualization
+            std::string queryVizFilename = fs::path(inputFile).stem().string() + "_query_fingerprint.json";
+            matcherImpl->signatureMatcher_->saveVisualization(queryVizFilename);
+            
+            // Generate comparison visualization if source data is available
+            if (sourceVizEnabled) {
+                std::string comparisonVizFilename = "comparison_" + fs::path(inputFile).stem().string() + "_vs_source";
+                matcherImpl->signatureMatcher_->saveComparisonVisualization(sourceVizData, comparisonVizFilename);
+            }
+        }
+    }
 }
 
 int main(int argc, char* argv[]) {
     if (argc < 4) {
         std::cerr << "Usage:" << std::endl;
-        std::cerr << "  Generate fingerprints: " << argv[0] << " generate <algorithm> <output_file> <input_file1> [input_file2 ...]" << std::endl;
-        std::cerr << "  Match fingerprints: " << argv[0] << " match <algorithm> <catalog_file> <input_file>" << std::endl;
+        std::cerr << "  Generate fingerprints: " << argv[0] << " generate <algorithm> <output_file> <input_file1> [input_file2 ...] [--visualize]" << std::endl;
+        std::cerr << "  Match fingerprints: " << argv[0] << " match <algorithm> <catalog_file> <input_file> [--visualize]" << std::endl;
         return 1;
     }
 
     std::string mode = argv[1];
+    bool visualize = false;
+    
+    // Check for visualization flag
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--visualize") {
+            visualize = true;
+            break;
+        }
+    }
     
     if (mode == "generate") {
         if (argc < 5) {
@@ -189,7 +278,9 @@ int main(int argc, char* argv[]) {
         std::string outputFile = argv[3];
         std::vector<std::string> inputFiles;
         for (int i = 4; i < argc; ++i) {
-            inputFiles.push_back(argv[i]);
+            if (std::string(argv[i]) != "--visualize") {
+                inputFiles.push_back(argv[i]);
+            }
         }
         
         std::cout << "将生成指纹保存到: " << outputFile << std::endl;
@@ -197,7 +288,7 @@ int main(int argc, char* argv[]) {
             std::cout << "处理文件: " << file << std::endl;
         }
         
-        generateFingerprints(algorithm, outputFile, inputFiles);
+        generateFingerprints(algorithm, outputFile, inputFiles, visualize);
         std::cout << "指纹生成完成，已保存到: " << outputFile << std::endl;
         
     } else if (mode == "match") {
@@ -217,7 +308,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        matchFingerprints(inputFile, catalogFile);
+        matchFingerprints(inputFile, catalogFile, visualize);
         std::cout << "处理完成!" << std::endl;
         
     } else {

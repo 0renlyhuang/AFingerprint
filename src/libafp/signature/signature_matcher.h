@@ -9,6 +9,7 @@
 #include "signature/signature_generator.h"
 #include "catalog/catalog.h"
 #include "config/performance_config.h"
+#include "debugger/visualization.h"
 
 namespace afp {
 
@@ -104,27 +105,29 @@ public:
 
     // 清除所有匹配结果
     void clearMatches();
+    
+    // Visualization methods
+    // Enable/disable visualization data collection
+    void enableVisualization(bool enable) {
+        collectVisualizationData_ = enable;
+    }
+    
+    // Get visualization data
+    VisualizationData getVisualizationData() const {
+        return visualizationData_;
+    }
+    
+    // Set title for visualization
+    void setVisualizationTitle(const std::string& title) {
+        visualizationData_.title = title;
+    }
+    
+    // Generate visualization and save to file
+    bool saveVisualization(const std::string& filename) const;
+    
+    // Generate comparison visualization between source and query data
+    bool saveComparisonVisualization(const VisualizationData& sourceData, const std::string& filename) const;
 
-private:
-    // 执行哈希匹配
-    void performMatching(const std::vector<SignaturePoint>& querySignature, size_t inputChannelCount);
-    
-    // 处理单个哈希匹配
-    void processHashMatch(uint32_t hash, double queryTime, 
-                         const MediaItem& mediaItem, double targetTime, size_t inputChannelCount, size_t totalTargetHashesCount);
-    
-    // 更新候选结果状态（淘汰过期的，评估匹配置信度）
-    void updateCandidates(double currentTimestamp);
-    
-    // 根据置信度评估候选结果是否达到通知标准
-    bool evaluateCandidate(MatchCandidate& candidate, double currentTimestamp);
-    
-    // 淘汰过期的候选结果
-    void removeExpiredCandidates(double currentTimestamp);
-    
-    // 限制候选结果数量
-    void limitCandidatesCount();
-    
 private:
     std::shared_ptr<ICatalog> catalog_;  // 存储目录引用
     std::vector<MatchCandidate> candidates_;  // 所有候选结果
@@ -178,6 +181,10 @@ private:
     std::unordered_map<CandidateSessionKey, MatchingCandidate> session2CandidateMap_;
     std::vector<MatchResult> matchResults_;
     std::vector<CandidateSessionKey> expiredCandidateSessionKeys_;
+    
+    // Visualization data
+    bool collectVisualizationData_ = false;
+    VisualizationData visualizationData_;
 };
 
 } // namespace afp 

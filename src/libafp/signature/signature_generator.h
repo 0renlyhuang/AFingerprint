@@ -6,6 +6,7 @@
 #include <deque>
 #include "fft/fft_interface.h"
 #include "debugger/audio_debugger.h"
+#include "debugger/visualization.h"
 #include "afp/iperformance_config.h"
 #include "afp/pcm_format.h"
 #include "audio/pcm_reader.h"
@@ -69,6 +70,25 @@ public:
     
     // 重置所有已生成的签名
     void resetSignatures() override;
+    
+    // Visualization methods
+    // Enable/disable visualization data collection
+    void enableVisualization(bool enable) {
+        collectVisualizationData_ = enable;
+    }
+    
+    // Get visualization data
+    VisualizationData getVisualizationData() const {
+        return visualizationData_;
+    }
+    
+    // Set title for visualization
+    void setVisualizationTitle(const std::string& title) {
+        visualizationData_.title = title;
+    }
+    
+    // Generate visualization and save to file
+    bool saveVisualization(const std::string& filename) const;
 
 private:
     // 处理短帧FFT分析
@@ -127,6 +147,10 @@ private:
     
     // 每个通道的短帧FFT结果缓冲区
     std::map<uint32_t, std::vector<FFTResult>> fftResultsMap_;
+    
+    // Visualization data
+    bool collectVisualizationData_ = false;
+    VisualizationData visualizationData_;
 };
 
 } // namespace afp 
