@@ -262,7 +262,7 @@ void SignatureMatcher::processQuerySignature(
                     // Add to visualization data if enabled
                     if (collectVisualizationData_) {
                         visualizationData_.matchedPoints.emplace_back(
-                            queryPoint.frequency, queryPoint.timestamp, queryPoint.hash);
+                            queryPoint.frequency, queryPoint.timestamp, queryPoint.hash, sessionKey.offset);
                     }
 
                     if (queryPointprint < 300) {
@@ -310,7 +310,7 @@ void SignatureMatcher::processQuerySignature(
                 // Add to visualization data if enabled
                 if (collectVisualizationData_) {
                     visualizationData_.matchedPoints.emplace_back(
-                        queryPoint.frequency, queryPoint.timestamp, queryPoint.hash);
+                        queryPoint.frequency, queryPoint.timestamp, queryPoint.hash, sessionKey.offset);
                 }
 
                 if (session2CandidateMap_.find(sessionKey) != session2CandidateMap_.end()) {
@@ -439,24 +439,173 @@ bool SignatureMatcher::saveVisualization(const std::string& filename) const {
         return false;
     }
     
-    // Save data to JSON
-    if (!Visualizer::saveVisualization(visualizationData_, filename)) {
-        return false;
-    }
-    
-    // Generate visualization plot
-    return Visualizer::generateExtractionPlot(visualizationData_, filename);
+    // Save data to JSON (no Python script generation)
+    return Visualizer::saveVisualization(visualizationData_, filename);
 }
 
-// Generate comparison visualization
-bool SignatureMatcher::saveComparisonVisualization(const VisualizationData& sourceData, const std::string& filename) const {
+// Save sessions data for visualization
+bool SignatureMatcher::saveSessionsData(const std::string& filename) const {
     if (!collectVisualizationData_) {
         std::cerr << "Visualization data collection is not enabled" << std::endl;
         return false;
     }
     
-    // Generate comparison plot between source and query fingerprints
-    return Visualizer::generateMatchingPlot(sourceData, visualizationData_, filename);
+    // Extract top sessions (limited to top 3)
+    std::vector<SessionData> topSessions;
+    
+    // Create a vector of all candidates for sorting
+    std::vector<std::pair<CandidateSessionKey, MatchingCandidate>> candidates;
+    for (const auto& pair : session2CandidateMap_) {
+        candidates.push_back(pair);
+    }
+    
+    // Sort by match count in descending order
+    std::sort(candidates.begin(), candidates.end(), 
+        [](const auto& a, const auto& b) {
+            return a.second.matchCount > b.second.matchCount;
+        });
+    
+    // Take top 3 sessions or fewer if less are available
+    size_t sessionsToInclude = std::min(candidates.size(), size_t(3));
+    for (size_t i = 0; i < sessionsToInclude; ++i) {
+        const auto& [key, candidate] = candidates[i];
+        
+        SessionData sessionData;
+        sessionData.id = i + 1; // Use 1-based index for session ID
+        sessionData.matchCount = candidate.matchCount;
+        
+        // Calculate confidence
+        double confidence = 0.0;
+        if (candidate.matchCount >= minMatchesRequired_) {
+            if (candidate.matchCount >= candidate.maxPossibleMatches) {
+                confidence = 1.0;
+            } else {
+                confidence = static_cast<double>(candidate.matchCount) / candidate.maxPossibleMatches;
+            }
+        }
+        sessionData.confidence = confidence;
+        
+        // Extract media title
+        sessionData.mediaTitle = candidate.targetSignatureInfo->mediaItem->title();
+        
+        topSessions.push_back(sessionData);
+    }
+    
+    // Save sessions data
+    return Visualizer::saveSessionsData(topSessions, filename);
+}
+
+// Save comparison visualization data
+bool SignatureMatcher::saveComparisonData(const VisualizationData& sourceData, 
+                                        const std::string& sourceFilename,
+                                        const std::string& queryFilename,
+                                        const std::string& sessionsFilename) const {
+    if (!collectVisualizationData_) {
+        std::cerr << "Visualization data collection is not enabled" << std::endl;
+        return false;
+    }
+    
+    // Create a copy of the source data to enhance with matched points
+    VisualizationData enhancedSourceData = sourceData;
+    
+    // Create a map of session IDs to each matched point in query data
+    std::unordered_map<uint32_t, uint32_t> hashToSessionMap;
+    
+    // Extract top sessions for visualizing
+    std::vector<std::pair<CandidateSessionKey, MatchingCandidate>> candidates;
+    for (const auto& pair : session2CandidateMap_) {
+        candidates.push_back(pair);
+    }
+    
+    // Sort by match count in descending order
+    std::sort(candidates.begin(), candidates.end(), 
+        [](const auto& a, const auto& b) {
+            return a.second.matchCount > b.second.matchCount;
+        });
+    
+    // Take top 3 sessions
+    std::vector<SessionData> topSessions;
+    size_t sessionsToInclude = std::min(candidates.size(), size_t(3));
+    
+    // Collect all matched points from query data, assigning session IDs
+    VisualizationData sessionQueryData = visualizationData_;
+    sessionQueryData.matchedPoints.clear(); // Clear existing matched points
+    
+    // For each top session, assign IDs to the matched points
+    for (size_t i = 0; i < sessionsToInclude; ++i) {
+        const auto& [key, candidate] = candidates[i];
+        uint32_t sessionId = i + 1; // Use 1-based index for session ID
+        
+        // Add session to top sessions list
+        SessionData sessionData;
+        sessionData.id = sessionId;
+        sessionData.matchCount = candidate.matchCount;
+        
+        // Calculate confidence
+        double confidence = 0.0;
+        if (candidate.matchCount >= minMatchesRequired_) {
+            if (candidate.matchCount >= candidate.maxPossibleMatches) {
+                confidence = 1.0;
+            } else {
+                confidence = static_cast<double>(candidate.matchCount) / candidate.maxPossibleMatches;
+            }
+        }
+        sessionData.confidence = confidence;
+        sessionData.mediaTitle = candidate.targetSignatureInfo->mediaItem->title();
+        topSessions.push_back(sessionData);
+        
+        // Create a map of hashes to matched fingerprint points in source data
+        std::unordered_map<uint32_t, std::vector<size_t>> sourceHashToIndexMap;
+        for (size_t idx = 0; idx < sourceData.fingerprintPoints.size(); ++idx) {
+            uint32_t hash = std::get<2>(sourceData.fingerprintPoints[idx]);
+            sourceHashToIndexMap[hash].push_back(idx);
+        }
+        
+        // For each match info in this candidate
+        for (const auto& matchInfo : candidate.matchInfos) {
+            // Extract the hash from the string format (e.g., " 0x12345")
+            std::string hashStr = matchInfo.hash;
+            uint32_t hash = 0;
+            
+            // Parse the hash value from string format
+            if (hashStr.find("0x") != std::string::npos) {
+                std::stringstream ss;
+                ss << std::hex << hashStr.substr(hashStr.find("0x") + 2);
+                ss >> hash;
+            }
+            
+            // Add to hashToSessionMap
+            hashToSessionMap[hash] = sessionId;
+            
+            // Add this point to the query data with session ID
+            for (const auto& point : visualizationData_.matchedPoints) {
+                if (std::get<2>(point) == hash) {
+                    // Create a new point with session ID
+                    sessionQueryData.matchedPoints.push_back(
+                        std::make_tuple(std::get<0>(point), std::get<1>(point), std::get<2>(point), sessionId)
+                    );
+                }
+            }
+            
+            // Find and add corresponding points in source data
+            auto it = sourceHashToIndexMap.find(hash);
+            if (it != sourceHashToIndexMap.end()) {
+                for (size_t idx : it->second) {
+                    const auto& sourcePoint = sourceData.fingerprintPoints[idx];
+                    enhancedSourceData.matchedPoints.push_back(
+                        std::make_tuple(std::get<0>(sourcePoint), std::get<1>(sourcePoint), std::get<2>(sourcePoint), sessionId)
+                    );
+                }
+            }
+        }
+    }
+    
+    // Save source data, query data, and sessions data
+    bool success = Visualizer::saveVisualization(enhancedSourceData, sourceFilename) &&
+                   Visualizer::saveVisualization(sessionQueryData, queryFilename) &&
+                   Visualizer::saveSessionsData(topSessions, sessionsFilename);
+    
+    return success;
 }
 
 } // namespace afp 

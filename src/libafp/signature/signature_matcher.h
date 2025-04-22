@@ -122,11 +122,17 @@ public:
         visualizationData_.title = title;
     }
     
-    // Generate visualization and save to file
+    // Save visualization data to file (JSON only)
     bool saveVisualization(const std::string& filename) const;
     
-    // Generate comparison visualization between source and query data
-    bool saveComparisonVisualization(const VisualizationData& sourceData, const std::string& filename) const;
+    // Save top matching sessions data to JSON file
+    bool saveSessionsData(const std::string& filename) const;
+    
+    // Save comparison data for source and query fingerprints
+    bool saveComparisonData(const VisualizationData& sourceData, 
+                           const std::string& sourceFilename,
+                           const std::string& queryFilename,
+                           const std::string& sessionsFilename) const;
 
 private:
     std::shared_ptr<ICatalog> catalog_;  // 存储目录引用

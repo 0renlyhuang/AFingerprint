@@ -84,13 +84,8 @@ bool SignatureGenerator::saveVisualization(const std::string& filename) const {
         return false;
     }
     
-    // Save data to JSON
-    if (!Visualizer::saveVisualization(visualizationData_, filename)) {
-        return false;
-    }
-    
-    // Generate visualization plot
-    return Visualizer::generateExtractionPlot(visualizationData_, filename);
+    // Save data to JSON (no Python script generation)
+    return Visualizer::saveVisualization(visualizationData_, filename);
 }
 
 // 流式处理音频数据

@@ -14,12 +14,20 @@ struct VisualizationData {
     // Stores the selected fingerprint points (frequency, timestamp, hash)
     std::vector<std::tuple<uint32_t, double, uint32_t>> fingerprintPoints;
     
-    // Stores matched points during matching (frequency, timestamp, hash)
-    std::vector<std::tuple<uint32_t, double, uint32_t>> matchedPoints;
+    // Stores matched points during matching (frequency, timestamp, hash, session_id)
+    std::vector<std::tuple<uint32_t, double, uint32_t, uint32_t>> matchedPoints;
     
     // Metadata
     std::string title;
     double duration;
+};
+
+// Structure to store top matching sessions for visualization
+struct SessionData {
+    uint32_t id;
+    uint32_t matchCount;
+    double confidence;
+    std::string mediaTitle;
 };
 
 class Visualizer {
@@ -27,16 +35,11 @@ public:
     Visualizer();
     ~Visualizer();
     
-    // Save visualization data to a file
+    // Save visualization data to a JSON file (no Python script generation)
     static bool saveVisualization(const VisualizationData& data, const std::string& filename);
     
-    // Generate fingerprint extraction visualization
-    static bool generateExtractionPlot(const VisualizationData& data, const std::string& filename);
-    
-    // Generate matching visualization
-    static bool generateMatchingPlot(const VisualizationData& sourceData, 
-                                   const VisualizationData& queryData,
-                                   const std::string& filename);
+    // Save top matching sessions data to a JSON file
+    static bool saveSessionsData(const std::vector<SessionData>& sessions, const std::string& filename);
     
     // Get singleton instance
     static Visualizer& getInstance();

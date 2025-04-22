@@ -191,7 +191,6 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
             // Save source visualization
             std::string sourceVizFilename = catalog->mediaItems()[i].title() + "_source_fingerprint.json";
             afp::Visualizer::saveVisualization(sourceVizData, sourceVizFilename);
-            afp::Visualizer::generateExtractionPlot(sourceVizData, sourceVizFilename);
         }
     }
 
@@ -243,8 +242,20 @@ void matchFingerprints(const std::string& inputFile, const std::string& catalogF
             
             // Generate comparison visualization if source data is available
             if (sourceVizEnabled) {
-                std::string comparisonVizFilename = "comparison_" + fs::path(inputFile).stem().string() + "_vs_source";
-                matcherImpl->signatureMatcher_->saveComparisonVisualization(sourceVizData, comparisonVizFilename);
+                std::string comparisonBasename = "comparison_" + fs::path(inputFile).stem().string() + "_vs_source";
+                std::string sourceFilename = comparisonBasename + "_source.json";
+                std::string queryFilename = comparisonBasename + "_query.json";
+                std::string sessionsFilename = comparisonBasename + "_sessions.json";
+                
+                matcherImpl->signatureMatcher_->saveComparisonData(
+                    sourceVizData, 
+                    sourceFilename,
+                    queryFilename,
+                    sessionsFilename
+                );
+                
+                // 保存会话数据以供交互式可视化使用
+                matcherImpl->signatureMatcher_->saveSessionsData(sessionsFilename);
             }
         }
     }
