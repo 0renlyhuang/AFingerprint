@@ -4,7 +4,7 @@ This directory contains the visualization tools for the audio fingerprinting sys
 
 ## Files
 
-- `visualize_fingerprints.py` - Python script to generate interactive visualizations
+- `visualize_fingerprints.py` - Python script to generate interactive visualizations with audio playback
 
 ## Usage
 
@@ -21,6 +21,16 @@ python3 visualize_fingerprints.py --query path/to/query.json
 python3 visualize_fingerprints.py --source path/to/source.json --query path/to/query.json --sessions path/to/sessions.json
 ```
 
+To add audio playback functionality:
+
+```bash
+# For fingerprint extraction visualization with audio
+python3 visualize_fingerprints.py --source path/to/fingerprint.json --source-audio path/to/audio.wav
+
+# For query audio visualization with audio
+python3 visualize_fingerprints.py --query path/to/query.json --query-audio path/to/audio.wav
+```
+
 To generate static PNG files:
 
 ```bash
@@ -34,11 +44,52 @@ python3 visualize_fingerprints.py --query path/to/query.json --output output.png
 python3 visualize_fingerprints.py --source path/to/source.json --query path/to/query.json --sessions path/to/sessions.json --output output.png
 ```
 
+## Embedded Audio File Paths
+
+The visualization system now supports embedding audio file paths directly in the JSON data files:
+
+1. The C++ code includes the path to the audio file (PCM/WAV/MP3) in the generated JSON
+2. The visualization script automatically detects and uses these embedded paths
+3. Command-line audio paths (--source-audio, --query-audio) will override embedded paths if provided
+
+Example of JSON format with embedded audio path:
+
+```json
+{
+  "title": "Audio Sample",
+  "duration": 30.5,
+  "audioFilePath": "/path/to/audio.wav",
+  "allPeaks": [
+    ...
+  ]
+}
+```
+
 ## Requirements
 
 - Python 3.x
 - matplotlib
 - numpy
+- For audio playback:
+  - soundfile
+  - sounddevice
+
+Install audio playback dependencies:
+
+```bash
+pip install soundfile sounddevice
+```
+
+## Audio Playback
+
+The audio playback feature allows you to:
+
+1. Visualize fingerprint points while listening to the corresponding audio
+2. Click anywhere on the spectrogram to jump to that position in the audio
+3. Use the play/stop buttons and time slider to control playback
+4. See which audio segments correspond to specific fingerprint points
+
+This helps in understanding which audio features are being selected as fingerprints by the algorithm.
 
 ## Integration with C++ Code
 

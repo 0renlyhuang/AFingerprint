@@ -87,6 +87,11 @@ public:
         visualizationData_.title = title;
     }
     
+    // Set audio file path for visualization
+    void setAudioFilePath(const std::string& path) {
+        visualizationData_.audioFilePath = path;
+    }
+    
     // Generate visualization and save to file
     bool saveVisualization(const std::string& filename) const;
 

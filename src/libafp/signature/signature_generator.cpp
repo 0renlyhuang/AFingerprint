@@ -503,13 +503,22 @@ std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
                     int i = 0;
                 }
                 // 添加调试信息 - 确保std::hex只影响hash值的输出
-                if (signatures.size() < 5) {
+                // if (signatures.size() < 5) {
                     std::cout << "[Debug] 生成三帧指纹点: 锚点时间戳=" << anchorPeak.timestamp 
                               << "s, 目标1时间戳=" << targetPeak1.timestamp
                               << "s, 目标2时间戳=" << targetPeak2.timestamp
                               << "s, 哈希=0x" << std::hex << hash << std::dec 
-                              << ", 频率=" << anchorPeak.frequency << "Hz" << std::endl;
-                }
+                              << ", anchorPeak频率=" << anchorPeak.frequency << "Hz" 
+                              << ", targetPeak1频率=" << targetPeak1.frequency << "Hz" 
+                              << ", targetPeak2频率=" << targetPeak2.frequency << "Hz" 
+                              << ", anchorPeak幅度=" << anchorPeak.magnitude
+                              << ", targetPeak1幅度=" << targetPeak1.magnitude
+                              << ", targetPeak2幅度=" << targetPeak2.magnitude
+                              << ", anchorPeak时间戳=" << anchorPeak.timestamp << "s"
+                              << ", targetPeak1时间戳=" << targetPeak1.timestamp << "s"
+                              << ", targetPeak2时间戳=" << targetPeak2.timestamp << "s"
+                              << std::endl;
+                // }
                 
                 // Add to visualization data if enabled
                 if (collectVisualizationData_) {

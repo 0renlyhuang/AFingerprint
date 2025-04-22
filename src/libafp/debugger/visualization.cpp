@@ -32,6 +32,11 @@ bool Visualizer::saveVisualization(const VisualizationData& data, const std::str
     file << "  \"title\": \"" << data.title << "\",\n";
     file << "  \"duration\": " << data.duration << ",\n";
     
+    // Write audio file path if available
+    if (!data.audioFilePath.empty()) {
+        file << "  \"audioFilePath\": \"" << data.audioFilePath << "\",\n";
+    }
+    
     // Write peaks
     file << "  \"allPeaks\": [\n";
     for (size_t i = 0; i < data.allPeaks.size(); ++i) {

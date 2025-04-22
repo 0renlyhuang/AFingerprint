@@ -122,6 +122,11 @@ public:
         visualizationData_.title = title;
     }
     
+    // Set audio file path for visualization
+    void setAudioFilePath(const std::string& path) {
+        visualizationData_.audioFilePath = path;
+    }
+    
     // Save visualization data to file (JSON only)
     bool saveVisualization(const std::string& filename) const;
     

@@ -600,10 +600,22 @@ bool SignatureMatcher::saveComparisonData(const VisualizationData& sourceData,
         }
     }
     
+    // 确保音频文件路径被保留在对应的可视化数据中
+    // 查询数据使用当前可视化数据中的音频路径
+    sessionQueryData.audioFilePath = visualizationData_.audioFilePath;
+    // 源数据保留其原有的音频路径
+    
     // Save source data, query data, and sessions data
     bool success = Visualizer::saveVisualization(enhancedSourceData, sourceFilename) &&
                    Visualizer::saveVisualization(sessionQueryData, queryFilename) &&
                    Visualizer::saveSessionsData(topSessions, sessionsFilename);
+    
+    if (success) {
+        std::cout << "Saved comparison visualization data:" << std::endl;
+        std::cout << "  - Source data: " << sourceFilename << (enhancedSourceData.audioFilePath.empty() ? "" : " (with audio path)") << std::endl;
+        std::cout << "  - Query data: " << queryFilename << (sessionQueryData.audioFilePath.empty() ? "" : " (with audio path)") << std::endl;
+        std::cout << "  - Sessions data: " << sessionsFilename << std::endl;
+    }
     
     return success;
 }

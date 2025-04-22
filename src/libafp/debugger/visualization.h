@@ -20,6 +20,9 @@ struct VisualizationData {
     // Metadata
     std::string title;
     double duration;
+    
+    // Path to the audio file for playback (PCM/WAV/MP3)
+    std::string audioFilePath;
 };
 
 // Structure to store top matching sessions for visualization
