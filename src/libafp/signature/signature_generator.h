@@ -119,8 +119,7 @@ private:
 
 private:
     static const size_t FRAME_BUFFER_SIZE = 3;  // 保存3帧用于生成指纹
-    constexpr static const double FRAME_DURATION = 0.1;   // 长帧持续时间（0.1秒）
-    constexpr static const double SHORT_FRAME_DURATION = 0.02;  // 短帧持续时间（0.02秒）
+    double frameDuration_;   // 长帧持续时间，由配置决定
 
     size_t fftSize_;        // FFT窗口大小
     size_t samplesPerFrame_; // 每帧所需的样本数量

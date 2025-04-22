@@ -32,6 +32,7 @@ struct SignatureGenerationConfig {
     size_t minFreqDelta;      // 最小频率差 (Hz)
     size_t maxFreqDelta;      // 最大频率差 (Hz)
     double maxTimeDelta;      // 最大时间差 (秒)
+    double frameDuration;     // 长帧持续时间 (秒)
 };
 
 // 匹配配置

@@ -20,6 +20,7 @@ struct PairHash {
 SignatureGenerator::SignatureGenerator(std::shared_ptr<IPerformanceConfig> config)
     : config_(config)
     , fftSize_(config->getFFTConfig().fftSize)
+    , frameDuration_(config->getSignatureGenerationConfig().frameDuration)  // 从配置中获取长帧时长
     , samplesPerFrame_(0)  // 将在init中设置
     , samplesPerShortFrame_(0)  // 将在init中设置
     , shortFramesPerLongFrame_(0)  // 将在init中设置
@@ -43,19 +44,17 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     sampleRate_ = format.sampleRate();
     reader_ = std::make_unique<PCMReader>(format);
     
-    // 计算每个长帧需要的样本数（0.1秒/帧）
-    samplesPerFrame_ = static_cast<size_t>(FRAME_DURATION * sampleRate_);
+    // 计算每个长帧需要的样本数，使用配置的frameDuration_
+    samplesPerFrame_ = static_cast<size_t>(frameDuration_ * sampleRate_);
     
-    // 计算每个短帧需要的样本数（0.02秒/短帧）
-    samplesPerShortFrame_ = static_cast<size_t>(SHORT_FRAME_DURATION * sampleRate_);
+    // 使用fftSize_作为短帧的样本数量，而不是基于时间计算
+    samplesPerShortFrame_ = fftSize_;
     
-    // 计算每个长帧包含的短帧数
-    shortFramesPerLongFrame_ = static_cast<size_t>(FRAME_DURATION / SHORT_FRAME_DURATION);
+    // 计算每个短帧的持续时间（秒）
+    double shortFrameDuration = static_cast<double>(samplesPerShortFrame_) / sampleRate_;
     
-    // 确保samplesPerShortFrame_至少等于fftSize_
-    if (samplesPerShortFrame_ < fftSize_) {
-        samplesPerShortFrame_ = fftSize_;
-    }
+    // 重新计算每个长帧包含的短帧数，使用配置的frameDuration_
+    shortFramesPerLongFrame_ = static_cast<size_t>(std::ceil(frameDuration_ / shortFrameDuration));
     
     // 清空所有缓冲区和历史记录
     frameHistoryMap_.clear();
@@ -69,9 +68,11 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     }
     
     std::cout << "[Debug] 初始化完成: 采样率=" << sampleRate_ 
-              << "Hz, 每长帧样本数=" << samplesPerFrame_
+              << "Hz, 长帧时长=" << frameDuration_
+              << "s, 每长帧样本数=" << samplesPerFrame_
               << ", 每短帧样本数=" << samplesPerShortFrame_
-              << ", 每长帧包含短帧数=" << shortFramesPerLongFrame_
+              << ", 每短帧持续时间=" << shortFrameDuration
+              << "s, 每长帧包含短帧数=" << shortFramesPerLongFrame_
               << ", FFT大小=" << fftSize_ << std::endl;
               
     return true;
@@ -151,8 +152,8 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
                 // 重置缓冲区
                 channelBuffer.consumed = 0;
                 
-                // 更新时间戳为下一个短帧的开始时间
-                channelBuffer.timestamp += SHORT_FRAME_DURATION;
+                // 更新时间戳为下一个短帧的开始时间，基于实际的短帧样本数
+                channelBuffer.timestamp += static_cast<double>(samplesPerShortFrame_) / sampleRate_;
                 
                 // Update visualization duration if needed
                 if (collectVisualizationData_ && channelBuffer.timestamp > visualizationData_.duration) {
@@ -373,17 +374,47 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
         }
     }
     
-    // 按幅度从大到小排序
-    std::sort(candidatePeaks.begin(), candidatePeaks.end(), [](const Peak& a, const Peak& b) {
-        return a.magnitude > b.magnitude;
-    });
+   // 限制每个长帧的峰值数量，同时保持原始相对顺序
+   if (candidatePeaks.size() > peakConfig.maxPeaksPerFrame) {
+       // 创建原始索引和幅度的对组
+       std::vector<std::pair<size_t, float>> indexMagnitudePairs;
+       indexMagnitudePairs.reserve(candidatePeaks.size());
+       
+       for (size_t i = 0; i < candidatePeaks.size(); ++i) {
+           indexMagnitudePairs.emplace_back(i, candidatePeaks[i].magnitude);
+       }
+       
+       // 部分排序，仅找出前maxPeaksPerFrame个最大元素的索引
+       std::partial_sort(
+           indexMagnitudePairs.begin(),
+           indexMagnitudePairs.begin() + peakConfig.maxPeaksPerFrame,
+           indexMagnitudePairs.end(),
+           [](const auto& a, const auto& b) { return a.second > b.second; }
+       );
+       
+       // 提取前maxPeaksPerFrame个最大幅度元素的索引
+       std::vector<size_t> topIndices;
+       topIndices.reserve(peakConfig.maxPeaksPerFrame);
+       
+       for (size_t i = 0; i < peakConfig.maxPeaksPerFrame; ++i) {
+           topIndices.push_back(indexMagnitudePairs[i].first);
+       }
+       
+       // 按原始索引排序，这样可以保持原始顺序
+       std::sort(topIndices.begin(), topIndices.end());
+       
+       // 创建新的结果列表，保持原始顺序
+       std::vector<Peak> filteredPeaks;
+       filteredPeaks.reserve(peakConfig.maxPeaksPerFrame);
+       
+       for (size_t idx : topIndices) {
+           filteredPeaks.push_back(candidatePeaks[idx]);
+       }
+       
+       // 用筛选后的结果替换原始列表
+       candidatePeaks = std::move(filteredPeaks);
+   }
     
-    // 确保每个长帧的峰值数量不超过最大限制
-    if (candidatePeaks.size() > peakConfig.maxPeaksPerFrame) {
-        candidatePeaks.resize(peakConfig.maxPeaksPerFrame);
-    }
-    
-    // 已排序的峰值点
     return candidatePeaks;
 }
 
@@ -468,6 +499,9 @@ std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
                 signaturePoint.frequency = anchorPeak.frequency;
                 signaturePoint.amplitude = static_cast<uint32_t>(anchorPeak.magnitude * 1000);
                 
+                if (signatures.size() == 147) {
+                    int i = 0;
+                }
                 // 添加调试信息 - 确保std::hex只影响hash值的输出
                 if (signatures.size() < 5) {
                     std::cout << "[Debug] 生成三帧指纹点: 锚点时间戳=" << anchorPeak.timestamp 
@@ -500,30 +534,54 @@ uint32_t SignatureGenerator::computeTripleFrameHash(
     const Peak& targetPeak1,
     const Peak& targetPeak2) {
     
-    // 计算频率差 - 更精确的频率分量可以增强指纹独特性
+    // 计算频率差
     int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency - targetPeak1.frequency);
     int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency - anchorPeak.frequency);
     
-    // 计算时间差（毫秒），使用精确的峰值时间戳
-    // 量化为更高精度的毫秒值，提高区分度
+    // 计算时间差（毫秒）
     int32_t timeDelta1 = static_cast<int32_t>((anchorPeak.timestamp - targetPeak1.timestamp) * 1000);
     int32_t timeDelta2 = static_cast<int32_t>((targetPeak2.timestamp - anchorPeak.timestamp) * 1000);
     
-    // 应用范围约束，确保时间差值在可表示范围内
-    // 使用实际时间差的完整范围而不是简单取模操作
-    int32_t timeDelta1Constrained = std::max(-32, std::min(31, timeDelta1 / 10)); // 约束到[-32,31]范围
-    int32_t timeDelta2Constrained = std::max(-32, std::min(31, timeDelta2 / 10)); // 约束到[-32,31]范围
+    // 根据长帧时长调整量化步长
+    // 对于0.1秒的帧，使用10ms量化，更长的帧使用更大的量化步长
+    int32_t quantizationStep = static_cast<int32_t>(frameDuration_ * 100);
+    
+    // 约束时间差范围，调整为适应当前帧时长的范围
+    // 保持约束范围在[-32,31]，但量化步长随帧时长变化
+    int32_t timeDelta1Constrained = std::max(-32, std::min(31, timeDelta1 / quantizationStep));
+    int32_t timeDelta2Constrained = std::max(-32, std::min(31, timeDelta2 / quantizationStep));
     
     // 调整为无符号表示用于位操作
     uint32_t timeDelta1Unsigned = static_cast<uint32_t>(timeDelta1Constrained + 32) & 0x3F; // 6位
     uint32_t timeDelta2Unsigned = static_cast<uint32_t>(timeDelta2Constrained + 32) & 0x3F; // 6位
     
-    // 改进的哈希组合策略 - 更均衡地使用频率和时间信息
-    uint32_t hash = ((anchorPeak.frequency & 0xFFF) << 20) |   // 锚点频率 (12位)
-                   ((freqDelta1 & 0x3FF) << 10) |             // 第一个频率差 (10位)
-                   ((freqDelta2 & 0x3FF) << 0) |              // 第二个频率差 (10位)
-                   ((timeDelta1Unsigned & 0x3F) << 26) |      // 第一个时间差 (6位)
-                   ((timeDelta2Unsigned & 0x3F) << 32);       // 第二个时间差 (6位)
+    // 处理频率差，限制在10位表示范围内
+    uint32_t freqDelta1Mapped = static_cast<uint32_t>(std::abs(freqDelta1) & 0x1FF); // 9位幅度
+    uint32_t freqDelta2Mapped = static_cast<uint32_t>(std::abs(freqDelta2) & 0x1FF); // 9位幅度
+    
+    // 保留符号位（第10位）
+    if (freqDelta1 < 0) freqDelta1Mapped |= 0x200;
+    if (freqDelta2 < 0) freqDelta2Mapped |= 0x200;
+    
+    // 创建第一组异或组合（频率差1和时间差1）
+    // 使用异或运算结合频率和时间信息，增加区分度
+    uint32_t combo1 = (freqDelta1Mapped & 0x3FF) ^ 
+                     ((timeDelta1Unsigned & 0x03) << 8) ^ // 时间差低2位移到高位
+                     ((timeDelta1Unsigned & 0x3C) << 2);  // 时间差高4位调整位置
+    
+    // 创建第二组异或组合（频率差2和时间差2）
+    uint32_t combo2 = (freqDelta2Mapped & 0x3FF) ^ 
+                     ((timeDelta2Unsigned & 0x03) << 8) ^ // 时间差低2位移到高位
+                     ((timeDelta2Unsigned & 0x3C) << 2);  // 时间差高4位调整位置
+    
+    // 确保组合结果不超过10位
+    combo1 &= 0x3FF;
+    combo2 &= 0x3FF;
+    
+    // 最终的哈希组合
+    uint32_t hash = ((anchorPeak.frequency & 0xFFF) << 20) | // 锚点频率 (12位) - 位置20-31
+                   (combo1 << 10) |                         // 第一组组合 (10位) - 位置10-19
+                   combo2;                                  // 第二组组合 (10位) - 位置0-9
     
     return hash;
 }

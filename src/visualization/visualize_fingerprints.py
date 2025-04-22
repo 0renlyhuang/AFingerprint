@@ -661,7 +661,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None):
                     text = f"Multiple Matches (Session {session_id})\nPosition: ({x:.2f}, {y:.0f})\n"
                     for i, point in enumerate(same_position_points):
                         text += f"Point {i+1}: Hash: {point[2]}\n"
-                    text += f"总计: {len(same_position_points)}个点"
+                    text += f"total: {len(same_position_points)} points"
                 
                 ax2_annot.set_text(text)
                 ax2_annot.set_visible(True)
