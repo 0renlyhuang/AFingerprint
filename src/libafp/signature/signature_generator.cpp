@@ -20,6 +20,7 @@ struct PairHash {
 SignatureGenerator::SignatureGenerator(std::shared_ptr<IPerformanceConfig> config)
     : config_(config)
     , fftSize_(config->getFFTConfig().fftSize)
+    , hopSize_(config->getFFTConfig().hopSize)  // 从配置中获取帧移大小
     , frameDuration_(config->getSignatureGenerationConfig().frameDuration)  // 从配置中获取长帧时长
     , samplesPerFrame_(0)  // 将在init中设置
     , samplesPerShortFrame_(0)  // 将在init中设置
@@ -50,10 +51,16 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     // 使用fftSize_作为短帧的样本数量，而不是基于时间计算
     samplesPerShortFrame_ = fftSize_;
     
-    // 计算每个短帧的持续时间（秒）
-    double shortFrameDuration = static_cast<double>(samplesPerShortFrame_) / sampleRate_;
+    // 检查hopSize是否合理，如果未设置或者大于窗口大小，则默认为窗口大小的一半
+    if (hopSize_ == 0 || hopSize_ >= fftSize_) {
+        hopSize_ = fftSize_ / 2;
+        std::cout << "[Debug] hopSize设置不合理，已重置为fftSize的一半: " << hopSize_ << std::endl;
+    }
     
-    // 重新计算每个长帧包含的短帧数，使用配置的frameDuration_
+    // 计算每个短帧的持续时间（秒）
+    double shortFrameDuration = static_cast<double>(hopSize_) / sampleRate_;
+    
+    // 重新计算每个长帧包含的短帧数，使用配置的frameDuration_和hopSize决定的短帧时长
     shortFramesPerLongFrame_ = static_cast<size_t>(std::ceil(frameDuration_ / shortFrameDuration));
     
     // 清空所有缓冲区和历史记录
@@ -71,6 +78,8 @@ bool SignatureGenerator::init(const PCMFormat& format) {
               << "Hz, 长帧时长=" << frameDuration_
               << "s, 每长帧样本数=" << samplesPerFrame_
               << ", 每短帧样本数=" << samplesPerShortFrame_
+              << ", 帧移大小=" << hopSize_
+              << ", 帧重叠率=" << (1.0 - static_cast<double>(hopSize_) / fftSize_) * 100.0 << "%"
               << ", 每短帧持续时间=" << shortFrameDuration
               << "s, 每长帧包含短帧数=" << shortFramesPerLongFrame_
               << ", FFT大小=" << fftSize_ << std::endl;
@@ -147,13 +156,25 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
             
             // 如果缓冲区已满足一个短帧的数据量，处理短帧
             if (channelBuffer.consumed == samplesPerShortFrame_) {
+                // 处理当前短帧
                 processShortFrame(channelBuffer.samples.data(), channel, channelBuffer.timestamp);
                 
-                // 重置缓冲区
-                channelBuffer.consumed = 0;
+                // 通过帧移实现重叠
+                // 计算要保留的样本数（帧重叠部分）
+                size_t samplesToKeep = samplesPerShortFrame_ - hopSize_;
                 
-                // 更新时间戳为下一个短帧的开始时间，基于实际的短帧样本数
-                channelBuffer.timestamp += static_cast<double>(samplesPerShortFrame_) / sampleRate_;
+                // 将数据后移到缓冲区前部，实现重叠
+                if (samplesToKeep > 0) {
+                    std::memmove(channelBuffer.samples.data(), 
+                              channelBuffer.samples.data() + hopSize_, 
+                              samplesToKeep * sizeof(float));
+                }
+                
+                // 更新已消费样本数
+                channelBuffer.consumed = samplesToKeep;
+                
+                // 更新时间戳为下一个短帧的开始时间，基于帧移大小
+                channelBuffer.timestamp += static_cast<double>(hopSize_) / sampleRate_;
                 
                 // Update visualization duration if needed
                 if (collectVisualizationData_ && channelBuffer.timestamp > visualizationData_.duration) {

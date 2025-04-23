@@ -127,6 +127,7 @@ private:
     double frameDuration_;   // 长帧持续时间，由配置决定
 
     size_t fftSize_;        // FFT窗口大小
+    size_t hopSize_;        // 帧移大小（为实现重叠帧）
     size_t samplesPerFrame_; // 每帧所需的样本数量
     size_t samplesPerShortFrame_; // 每个短帧所需的样本数量
     size_t shortFramesPerLongFrame_; // 每个长帧包含的短帧数量
