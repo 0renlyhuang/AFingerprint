@@ -139,11 +139,11 @@ SignatureMatcher::SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::share
         std::sort(points.begin(), points.end(), [](const auto& a, const auto& b) {
             return a.second < b.second;
         });
-        std::cout << "rrr target: 按所有point的时间排序，输出前100个point的hash和timestamp" << std::endl;
-        for (size_t i = 0; i < std::min(points.size(), size_t(300)); ++i) {
-            std::cout << "rrr  [" << i + 1 << "] hash: 0x" << std::hex << points[i].first << std::dec 
-                      << ", timestamp: " << points[i].second << std::endl;
-        }
+        // std::cout << "rrr target: 按所有point的时间排序，输出前100个point的hash和timestamp" << std::endl;
+        // for (size_t i = 0; i < std::min(points.size(), size_t(300)); ++i) {
+        //     std::cout << "rrr  [" << i + 1 << "] hash: 0x" << std::hex << points[i].first << std::dec 
+        //               << ", timestamp: " << points[i].second << std::endl;
+        // }
     }
 
     std::cout << "预处理所有目标签名完成"
@@ -249,15 +249,15 @@ void SignatureMatcher::processQuerySignature(
 
             // 输出前100个querypoint的hash、timestamp、targetSignaturesInfo.hashTimestamp、offset、sessionKey的hash值
             const auto foundCandidate = session2CandidateMap_.find(sessionKey) != session2CandidateMap_.end();
-            if (queryPointprint < 300) {
-                std::cout << "rrr queryPointprint: " << queryPointprint << " hash: 0x" << std::hex << queryPoint.hash << std::dec
-                          << ", timestamp: " << queryPoint.timestamp 
-                          << ", targetSignaturesInfo.hashTimestamp: " << targetSignaturesInfo.hashTimestamp 
-                          << ", offset: " << offset 
-                          << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
-                          << ", foundCandidate: " << foundCandidate 
-                          << ", lastMatchTime: " << (foundCandidate ? session2CandidateMap_[sessionKey].lastMatchTime : 0) << std::endl;
-            }
+            // if (queryPointprint < 300) {
+            //     std::cout << "rrr queryPointprint: " << queryPointprint << " hash: 0x" << std::hex << queryPoint.hash << std::dec
+            //               << ", timestamp: " << queryPoint.timestamp 
+            //               << ", targetSignaturesInfo.hashTimestamp: " << targetSignaturesInfo.hashTimestamp 
+            //               << ", offset: " << offset 
+            //               << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
+            //               << ", foundCandidate: " << foundCandidate 
+            //               << ", lastMatchTime: " << (foundCandidate ? session2CandidateMap_[sessionKey].lastMatchTime : 0) << std::endl;
+            // }
 
 
 

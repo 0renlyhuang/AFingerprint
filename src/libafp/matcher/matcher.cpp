@@ -51,11 +51,11 @@ bool Matcher::appendStreamBuffer(const void* buffer,
     std::sort(points.begin(), points.end(), [](const auto& a, const auto& b) {
         return a.second < b.second;
     });
-    std::cout << "rrr query: 按所有point的时间排序，输出前100个point的hash和timestamp" << std::endl;
-    for (size_t i = 0; i < std::min(points.size(), size_t(300)); ++i) {
-        std::cout << "rrr  [" << i + 1 << "] hash: 0x" << std::hex << points[i].first << std::dec 
-                  << ", timestamp: " << points[i].second << std::endl;
-    }
+    // std::cout << "rrr query: 按所有point的时间排序，输出前100个point的hash和timestamp" << std::endl;
+    // for (size_t i = 0; i < std::min(points.size(), size_t(300)); ++i) {
+    //     std::cout << "rrr  [" << i + 1 << "] hash: 0x" << std::hex << points[i].first << std::dec 
+    //               << ", timestamp: " << points[i].second << std::endl;
+    // }
 
     // 将查询指纹传递给SignatureMatcher处理，并传入通道数量
     signatureMatcher_->processQuerySignature(querySignature, format_.channels());
