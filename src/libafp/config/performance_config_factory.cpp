@@ -24,8 +24,8 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->fftConfig_.hopSize = 441;     // 0.1秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
-    config->peakDetectionConfig_.localMaxRange = 5;        // 较小的本地最大值范围
-    config->peakDetectionConfig_.maxPeaksPerFrame = 7;     // 每帧最多7个峰值
+    config->peakDetectionConfig_.localMaxRange = 2;        // 较小的本地最大值范围
+    config->peakDetectionConfig_.maxPeaksPerFrame = 8;     // 每帧最多7个峰值
     config->peakDetectionConfig_.minPeakMagnitude = 0.1f;  // 较低的峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 5000;           // 最大频率
