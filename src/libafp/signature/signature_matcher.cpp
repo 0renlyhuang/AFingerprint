@@ -161,11 +161,24 @@ void SignatureMatcher::processQuerySignature(
     // 计算两个时间戳之间的近似时间偏移, 对于相近的时间戳，统一收敛到一个值，这样能提高系统的鲁棒性
     // TODO: 确认用int32_t存储时，时间的单位是什么
     auto approximate_time_offset_func = [this](double queryTime, double targetTime) -> int32_t {
-        double offset_ms = (targetTime - queryTime) * 1000;
-        // 量化到offsetTolerance_的倍数
-        int32_t quantized_offset = static_cast<int32_t>(std::round(offset_ms / offsetTolerance_ * 1000)) * offsetTolerance_ * 1000;
-        // 确保返回非负值
-        return quantized_offset;
+        // 将时间差计算为毫秒
+        double offset_ms = (queryTime - targetTime) * 1000.0;
+        
+        // 计算offsetTolerance_为毫秒单位
+        double offsetTolerance_ms = offsetTolerance_ * 1000.0;
+        
+        // 量化到offsetTolerance_ms的倍数
+        double quantized_offset = std::round(offset_ms / offsetTolerance_ms) * offsetTolerance_ms;
+        
+        // 转换为int32_t，确保在有效范围内
+        // INT32_MAX约为2^31-1 ≈ 2.147e9，对应约24天的毫秒数，足够音频匹配使用
+        if (quantized_offset > static_cast<double>(INT32_MAX)) {
+            return INT32_MAX;
+        } else if (quantized_offset < static_cast<double>(INT32_MIN)) {
+            return INT32_MIN;
+        }
+        
+        return static_cast<int32_t>(quantized_offset);
     };
 
     auto hash_seesion_key_func = [](const afp::CandidateSessionKey& k) {
@@ -253,7 +266,7 @@ void SignatureMatcher::processQuerySignature(
                 if (candidate.isNotified) {
                     continue;
                 }
-                if (queryPoint.timestamp >= candidate.lastMatchTime) {
+                if (queryPoint.timestamp >= candidate.lastMatchTime || true) {  // todo: 当前不考虑时间戳，直接更新match count
                     candidate.matchCount += 1;
                     candidate.matchInfos.push_back(DebugMatchInfo { hexHashString(queryPoint.hash), queryPoint.timestamp, targetSignaturesInfo.hashTimestamp, offset });
                     candidate.lastMatchTime = queryPoint.timestamp;

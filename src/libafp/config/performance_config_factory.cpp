@@ -41,7 +41,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->matchingConfig_.matchExpireTime = 3.0;         // 较短的过期时间
     config->matchingConfig_.minConfidenceThreshold = 0.5;  // 较高的置信度阈值
     config->matchingConfig_.minMatchesRequired = 7;       // 减少最小匹配点数要求
-    config->matchingConfig_.offsetTolerance = 0.5;        // 较大的时间偏移容忍度
+    config->matchingConfig_.offsetTolerance = 0.1;        // 较大的时间偏移容忍度
     
     return config;
 }
