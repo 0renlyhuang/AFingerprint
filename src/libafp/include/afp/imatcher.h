@@ -11,6 +11,7 @@ struct MatchResult {
     double offset;           // 时间偏移（秒）
     double confidence;       // 匹配置信度
     std::vector<SignaturePoint> matchedPoints;  // 匹配的点
+    size_t matchCount;
     size_t id;               // 唯一标识符
 };
 

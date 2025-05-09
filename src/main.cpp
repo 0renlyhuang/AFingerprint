@@ -245,7 +245,7 @@ void matchFingerprints(const std::string& algorithm,
             ss << "匹配: " << result.mediaItem->title()
                << ", 偏移: " << std::fixed << std::setprecision(2) << result.offset << "秒"
                << ", 置信度: " << std::fixed << std::setprecision(3) << result.confidence
-               << ", 匹配点数: " << result.matchedPoints.size();
+               << ", 匹配点数: " << result.matchCount;
             
             matchInfo = ss.str();
             
@@ -254,6 +254,7 @@ void matchFingerprints(const std::string& algorithm,
             std::cout << "  Offset: " << result.offset << " seconds" << std::endl;
             std::cout << "  Confidence: " << result.confidence << std::endl;
             std::cout << "  Matched points: " << result.matchedPoints.size() << std::endl;
+            std::cout << "  Matched count: " << result.matchCount << std::endl;
             std::cout << std::endl;
         });
 

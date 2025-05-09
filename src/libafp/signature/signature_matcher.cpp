@@ -418,6 +418,7 @@ void SignatureMatcher::processQuerySignature(
                     .offset = double(candidate.offset),  // TODO: candidate.offset is ms but offset is sec
                     .confidence = confidence,
                     .matchedPoints = {},
+                    .matchCount = candidate.matchCount,
                     .id = 0,
                 };
                 matchResults_.push_back(matchResult);

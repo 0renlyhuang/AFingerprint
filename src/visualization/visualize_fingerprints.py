@@ -423,12 +423,12 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
         # Plot all peaks
         peaks_scatter = ax.scatter([peak[1] for peak in data['allPeaks']], 
                                   [peak[0] for peak in data['allPeaks']], 
-                                  color='blue', alpha=0.3, s=10, label='All Peaks')
+                                  color='blue', alpha=0.7, s=10, label='All Peaks')
         
         # Plot fingerprint points
         fp_scatter = ax.scatter([point[1] for point in data['fingerprintPoints']], 
                                [point[0] for point in data['fingerprintPoints']], 
-                               color='red', s=25, label='Fingerprint Points')
+                               color='red', s=12, label='Fingerprint Points')
         
         # Set title and labels
         ax.set_title(f"Audio Fingerprint Extraction: {data['title']}")
@@ -452,19 +452,19 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
         # Plot all peaks
         peaks_scatter = ax.scatter([peak[1] for peak in data['allPeaks']], 
                                   [peak[0] for peak in data['allPeaks']], 
-                                  color='blue', alpha=0.3, s=10, label='All Peaks')
+                                  color='blue', alpha=0.7, s=10, label='All Peaks')
         
         # Plot fingerprint points
         fp_scatter = ax.scatter([point[1] for point in data['fingerprintPoints']], 
                                [point[0] for point in data['fingerprintPoints']], 
-                               color='red', s=25, label='Fingerprint Points')
+                               color='red', s=12, label='Fingerprint Points')
         
         # Plot matched points
         matched_scatter = None
         if 'matchedPoints' in data and data['matchedPoints']:
             matched_scatter = ax.scatter([point[1] for point in data['matchedPoints']], 
                                         [point[0] for point in data['matchedPoints']], 
-                                        color='orange', s=100, alpha=0.8, marker='*', 
+                                        color='orange', s=150, alpha=0.8, marker='*', 
                                         label='Matched Points')
         
         # Set title and labels
@@ -827,7 +827,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
     
     fp_scatter1 = ax1.scatter([point[1] for point in source_data['fingerprintPoints']], 
                              [point[0] for point in source_data['fingerprintPoints']], 
-                             color='red', s=25, label='Source Fingerprints')
+                             color='red', s=12, label='Source Fingerprints')
     
     # Store matched point scatters for each session
     matched_scatters1 = []
@@ -862,7 +862,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
                 if session_points:
                     scatter = ax1.scatter([p[1] for p in session_points], 
                                         [p[0] for p in session_points], 
-                                        color=session_color, s=150, alpha=1.0, marker='*', 
+                                        color=session_color, s=140, alpha=1.0, marker='*', 
                                         label=f'Session {session_id} ({session["matchCount"]} matches)')
                     matched_scatters1.append((scatter, session_id))
     elif 'matchedPoints' in source_data and source_data['matchedPoints']:
@@ -882,11 +882,11 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
     # Plot query audio (bottom)
     peaks_scatter2 = ax2.scatter([peak[1] for peak in query_data['allPeaks']], 
                                 [peak[0] for peak in query_data['allPeaks']], 
-                                color='green', alpha=0.3, s=10, label='Query Peaks')
+                                color='green', alpha=0.7, s=10, label='Query Peaks')
     
     fp_scatter2 = ax2.scatter([point[1] for point in query_data['fingerprintPoints']], 
                              [point[0] for point in query_data['fingerprintPoints']], 
-                             color='purple', s=25, label='Query Fingerprints')
+                             color='purple', s=12, label='Query Fingerprints')
     
     # Store matched point scatters for each session
     matched_scatters2 = []
@@ -1002,7 +1002,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
             hash_connections = {}
             
             # 限制每个会话的最大连线数，避免图形过于复杂
-            MAX_CONNECTIONS_PER_SESSION = 100
+            MAX_CONNECTIONS_PER_SESSION = 1000
             print(f"    设置最大连线数量: {MAX_CONNECTIONS_PER_SESSION}")
             
             # 从哈希值到源和查询间的连线
