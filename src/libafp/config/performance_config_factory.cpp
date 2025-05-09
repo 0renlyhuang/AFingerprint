@@ -24,9 +24,10 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->fftConfig_.hopSize = 441;     // 0.1秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
-    config->peakDetectionConfig_.localMaxRange = 2;        // 较小的本地最大值范围
-    config->peakDetectionConfig_.maxPeaksPerFrame = 8;     // 每帧最多7个峰值
-    config->peakDetectionConfig_.minPeakMagnitude = 0.1f;  // 较低的峰值幅度阈值
+    config->peakDetectionConfig_.localMaxRange = 7;        // 较小的本地最大值范围
+    config->peakDetectionConfig_.timeMaxRange = 4;         // 默认为1，只与相邻帧比较
+    config->peakDetectionConfig_.maxPeaksPerFrame = 7;     // 每帧最多7个峰值
+    config->peakDetectionConfig_.minPeakMagnitude = 0.5f;  // 较低的峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 5000;           // 最大频率
     
@@ -55,6 +56,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createDesktopConfi
     
     // 峰值检测配置 - PC端使用中等参数
     config->peakDetectionConfig_.localMaxRange = 3;        // 中等本地最大值范围
+    config->peakDetectionConfig_.timeMaxRange = 2;         // 中等时间维度最大值范围，前后2帧
     config->peakDetectionConfig_.maxPeaksPerFrame = 10;    // 每帧保留中等数量的峰值
     config->peakDetectionConfig_.minPeakMagnitude = 0.05f; // 中等峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
@@ -85,6 +87,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createServerConfig
     
     // 峰值检测配置 - 服务器端使用较严格的参数
     config->peakDetectionConfig_.localMaxRange = 4;        // 较大的本地最大值范围
+    config->peakDetectionConfig_.timeMaxRange = 3;         // 较大的时间维度最大值范围，前后3帧
     config->peakDetectionConfig_.maxPeaksPerFrame = 15;    // 每帧保留较多的峰值
     config->peakDetectionConfig_.minPeakMagnitude = 0.02f; // 较低的峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率

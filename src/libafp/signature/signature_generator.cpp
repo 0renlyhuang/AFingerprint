@@ -6,6 +6,24 @@
 #include <iomanip>
 #include <unordered_set>
 
+/**
+ * 签名生成器实现
+ * 
+ * 峰值检测的核心原理:
+ * 1. 在频率维度上，使用localMaxRange参数确定局部最大值的检测范围
+ *    - 需要比周围localMaxRange个频率bin都要大才被认为是频率维度上的峰值
+ * 
+ * 2. 在时间维度上，使用timeMaxRange参数确定局部最大值的检测范围
+ *    - 需要比前后timeMaxRange个时间帧的对应频率bin都要大才被认为是时间维度上的峰值
+ *    - 当timeMaxRange = 1时，相当于只与相邻帧比较(原始实现)
+ *    - 当timeMaxRange > 1时，会与更多前后帧比较，产生更具有时间一致性的峰值
+ * 
+ * 配置示例:
+ * - 移动端: timeMaxRange = 1，仅与相邻帧比较，性能更好
+ * - 台式机: timeMaxRange = 2，与前后2帧比较，平衡性能和准确度
+ * - 服务器: timeMaxRange = 3，与前后3帧比较，获得更高的准确度
+ */
+
 namespace afp {
 
 // 为std::pair<uint32_t, double>提供哈希函数
@@ -57,6 +75,9 @@ bool SignatureGenerator::init(const PCMFormat& format) {
         std::cout << "[Debug] hopSize设置不合理，已重置为fftSize的一半: " << hopSize_ << std::endl;
     }
     
+    // 获取峰值检测配置
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    
     // 计算每个短帧的持续时间（秒）
     double shortFrameDuration = static_cast<double>(hopSize_) / sampleRate_;
     
@@ -82,7 +103,9 @@ bool SignatureGenerator::init(const PCMFormat& format) {
               << ", 帧重叠率=" << (1.0 - static_cast<double>(hopSize_) / fftSize_) * 100.0 << "%"
               << ", 每短帧持续时间=" << shortFrameDuration
               << "s, 每长帧包含短帧数=" << shortFramesPerLongFrame_
-              << ", FFT大小=" << fftSize_ << std::endl;
+              << ", FFT大小=" << fftSize_ 
+              << ", 频率维度最大值范围=" << peakConfig.localMaxRange
+              << ", 时间维度最大值范围=" << peakConfig.timeMaxRange << std::endl;
               
     return true;
 }
@@ -327,24 +350,30 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
     
     std::vector<Peak> peaks;
     
-    if (fftResults.empty() || fftResults.size() < 3) { // 需要至少3个短帧来检测时间维度上的局部最大值
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    
+    // 检查是否有足够的短帧来进行时间维度上的峰值检测
+    // 需要至少 2*timeMaxRange + 1 个帧，才能在时间维度上检测局部最大值
+    // 例如：对于timeMaxRange=3，我们需要比较当前帧与前后各3帧，共需7帧
+    if (fftResults.empty() || fftResults.size() < 2*peakConfig.timeMaxRange + 1) {
         return peaks;
     }
-    
-    const auto& peakConfig = config_->getPeakDetectionConfig();
     
     // 创建一个候选峰值列表
     std::vector<Peak> candidatePeaks;
     
     // 在时频域上查找局部最大值
-    // 跳过第一个和最后一个时间帧，以便在时间维度上比较
-    for (size_t frameIdx = 1; frameIdx < fftResults.size() - 1; ++frameIdx) {
-        const auto& prevFrame = fftResults[frameIdx - 1];
+    // 跳过开始和结束的timeMaxRange个帧，以便在时间维度上能进行完整比较
+    for (size_t frameIdx = peakConfig.timeMaxRange; 
+         frameIdx < fftResults.size() - peakConfig.timeMaxRange; 
+         ++frameIdx) {
+        
         const auto& currentFrame = fftResults[frameIdx];
-        const auto& nextFrame = fftResults[frameIdx + 1];
         
         // 跳过频谱边缘的频率bin，以便在频率维度上比较
-        for (size_t freqIdx = peakConfig.localMaxRange; freqIdx < fftSize_ / 2 - peakConfig.localMaxRange; ++freqIdx) {
+        for (size_t freqIdx = peakConfig.localMaxRange; 
+             freqIdx < fftSize_ / 2 - peakConfig.localMaxRange; 
+             ++freqIdx) {
             
             // 检查频率范围
             if (currentFrame.frequencies[freqIdx] < peakConfig.minFreq || 
@@ -359,7 +388,8 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
                 continue;
             }
             
-            // 检查是否在频率维度上是局部最大值
+            // 检查是否在频率维度上是局部最大值 (频率域峰值检测)
+            // 确保当前频率bin的幅度比其前后localMaxRange个bin的幅度都大
             bool isFreqPeak = true;
             for (size_t j = 1; j <= peakConfig.localMaxRange; ++j) {
                 if (currentMagnitude <= currentFrame.magnitudes[freqIdx - j] || 
@@ -373,10 +403,25 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
                 continue;
             }
             
-            // 检查是否在时间维度上也是局部最大值
-            // 只与前一帧和后一帧的相同频率bin比较
-            if (currentMagnitude <= prevFrame.magnitudes[freqIdx] || 
-                currentMagnitude <= nextFrame.magnitudes[freqIdx]) {
+            // 改进：检查是否在时间维度上也是局部最大值 (时间域峰值检测)
+            // 确保当前帧中的该频率bin的幅度比前后timeMaxRange个帧中的相同bin幅度都大
+            // 这可以有效地滤除临时或随机的噪声峰值，只保留在时间上持续存在的真实峰值
+            bool isTimePeak = true;
+            for (size_t j = 1; j <= peakConfig.timeMaxRange; ++j) {
+                // 与前面的帧比较
+                if (currentMagnitude <= fftResults[frameIdx - j].magnitudes[freqIdx]) {
+                    isTimePeak = false;
+                    break;
+                }
+                
+                // 与后面的帧比较
+                if (currentMagnitude <= fftResults[frameIdx + j].magnitudes[freqIdx]) {
+                    isTimePeak = false;
+                    break;
+                }
+            }
+            
+            if (!isTimePeak) {
                 continue;
             }
             
@@ -444,8 +489,13 @@ void SignatureGenerator::processLongFrame(
                                uint32_t channel,
                                double frameTimestamp) {
     
+    // 获取当前使用的峰值检测配置
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    
     // 确保有足够的短帧FFT结果用于提取峰值
-    if (fftResultsMap_[channel].size() < shortFramesPerLongFrame_) {
+    // 需要至少 2*timeMaxRange + 1 个短帧来检测时间维度上的峰值
+    size_t minRequiredFrames = std::max(shortFramesPerLongFrame_, 2 * peakConfig.timeMaxRange + 1);
+    if (fftResultsMap_[channel].size() < minRequiredFrames) {
         return;
     }
     
