@@ -8,8 +8,8 @@ namespace afp {
 
 // Structure to hold data for visualization
 struct VisualizationData {
-    // Stores all peaks detected in the audio (frequency, timestamp)
-    std::vector<std::pair<uint32_t, double>> allPeaks;
+    // Stores all peaks detected in the audio (frequency, timestamp, amplitude)
+    std::vector<std::tuple<uint32_t, double, float>> allPeaks;
     
     // Stores the selected fingerprint points (frequency, timestamp, hash)
     std::vector<std::tuple<uint32_t, double, uint32_t>> fingerprintPoints;

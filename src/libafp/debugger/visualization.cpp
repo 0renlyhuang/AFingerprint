@@ -40,7 +40,9 @@ bool Visualizer::saveVisualization(const VisualizationData& data, const std::str
     // Write peaks
     file << "  \"allPeaks\": [\n";
     for (size_t i = 0; i < data.allPeaks.size(); ++i) {
-        file << "    [" << data.allPeaks[i].first << ", " << data.allPeaks[i].second << "]";
+        file << "    [" << std::get<0>(data.allPeaks[i]) << ", " 
+             << std::get<1>(data.allPeaks[i]) << ", "
+             << std::get<2>(data.allPeaks[i]) << "]";
         if (i < data.allPeaks.size() - 1) {
             file << ",";
         }

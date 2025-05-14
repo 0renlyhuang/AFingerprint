@@ -213,7 +213,7 @@ void SignatureMatcher::processQuerySignature(
                 point.frequency, point.timestamp, point.hash);
             
             // Also add as general peak for better visualization
-            visualizationData_.allPeaks.emplace_back(point.frequency, point.timestamp);
+            visualizationData_.allPeaks.emplace_back(point.frequency, point.timestamp, point.amplitude / 1000.0f);
         }
         
         // Set duration to the last timestamp + buffer

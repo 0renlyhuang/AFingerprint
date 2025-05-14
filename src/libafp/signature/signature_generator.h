@@ -106,12 +106,23 @@ private:
         const std::vector<FFTResult>& fftResults,
         double longFrameTimestamp);
 
-    // 从多帧峰值生成指纹 - 新方法（跨3帧）
+    // 从多帧峰值生成指纹 - 基于三帧组合的方法
+    // 实现了基于频率差异、时间差异和幅度的过滤:
+    // 1. 根据配置的minFreqDelta和maxFreqDelta过滤频率差异太小或太大的对
+    // 2. 根据配置的maxTimeDelta过滤时间差异太大的对
+    // 3. 根据幅度阈值过滤幅度太小的峰值点
+    // 4. 确保不同帧之间的频率差异充分，避免生成冗余或相似的哈希值
     std::vector<SignaturePoint> generateTripleFrameSignatures(
         const std::deque<Frame>& frameHistory,
         double currentTimestamp);
     
     // 计算三帧组合哈希值
+    // 增强的哈希计算方法，结合了以下特征:
+    // 1. 锚点峰值的频率作为基础特征
+    // 2. 峰值之间的频率差异
+    // 3. 峰值之间的时间差异
+    // 4. 峰值之间的相对幅度差异
+    // 通过结合这些特征，生成更具辨识度和稳定性的哈希值
     uint32_t computeTripleFrameHash(
         const Peak& anchorPeak,
         const Peak& targetPeak1,

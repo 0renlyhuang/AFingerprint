@@ -178,7 +178,7 @@ void matchFingerprints(const std::string& algorithm,
             // Add fingerprint points
             for (const auto& point : catalog->signatures()[i]) {
                 sourceVizData.fingerprintPoints.emplace_back(point.frequency, point.timestamp, point.hash);
-                sourceVizData.allPeaks.emplace_back(point.frequency, point.timestamp);
+                sourceVizData.allPeaks.emplace_back(point.frequency, point.timestamp, point.amplitude / 1000.0f);
                 
                 // Update duration
                 if (point.timestamp > sourceVizData.duration) {

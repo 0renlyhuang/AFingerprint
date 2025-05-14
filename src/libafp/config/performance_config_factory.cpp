@@ -24,18 +24,18 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->fftConfig_.hopSize = 441;     // 0.1秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
-    config->peakDetectionConfig_.localMaxRange = 7;        // 较小的本地最大值范围
-    config->peakDetectionConfig_.timeMaxRange = 4;         // 默认为1，只与相邻帧比较
-    config->peakDetectionConfig_.maxPeaksPerFrame = 7;     // 每帧最多7个峰值
-    config->peakDetectionConfig_.minPeakMagnitude = 0.5f;  // 较低的峰值幅度阈值
+    config->peakDetectionConfig_.localMaxRange = 4;        // 较小的本地最大值范围
+    config->peakDetectionConfig_.timeMaxRange = 2;         // 默认为1，只与相邻帧比较
+    config->peakDetectionConfig_.maxPeaksPerFrame = 5;     // 每帧最多7个峰值
+    config->peakDetectionConfig_.minPeakMagnitude = 0.3f;  // 较低的峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 5000;           // 最大频率
     
     // 指纹生成配置 - 针对三帧组合哈希优化
-    config->signatureGenerationConfig_.minFreqDelta = 40;   // 最小频率差
-    config->signatureGenerationConfig_.maxFreqDelta = 300;  // 最大频率差
-    config->signatureGenerationConfig_.maxTimeDelta = 0.3;  // 最大时间差限制为0.3秒（适合0.1秒/帧）
-    config->signatureGenerationConfig_.frameDuration = 0.1; // 移动端使用较短的长帧时长，优化性能
+    config->signatureGenerationConfig_.minFreqDelta = 60;   // 最小频率差，增加区分度
+    config->signatureGenerationConfig_.maxFreqDelta = 500;  // 最大频率差，避免跨度太大
+    config->signatureGenerationConfig_.maxTimeDelta = 0.2;  // 最大时间差限制为0.2秒，增强时间相关性
+    config->signatureGenerationConfig_.frameDuration = 0.08; // 移动端使用较短的长帧时长，优化性能
     
     // 匹配配置 - 移动端使用较严格的参数以减少内存使用
     config->matchingConfig_.maxCandidates = 20;            // 较少的候选结果
@@ -63,9 +63,9 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createDesktopConfi
     config->peakDetectionConfig_.maxFreq = 5500;           // 最大频率
     
     // 指纹生成配置 - PC端使用中等参数
-    config->signatureGenerationConfig_.minFreqDelta = 30;   // 中等最小频率差
-    config->signatureGenerationConfig_.maxFreqDelta = 300;  // 中等最大频率差
-    config->signatureGenerationConfig_.maxTimeDelta = 3.0;  // 中等最大时间差
+    config->signatureGenerationConfig_.minFreqDelta = 70;   // 中等最小频率差，增强区分度
+    config->signatureGenerationConfig_.maxFreqDelta = 600;  // 中等最大频率差，允许更广范围的匹配
+    config->signatureGenerationConfig_.maxTimeDelta = 0.3;  // 中等最大时间差，增强时序严谨性
     config->signatureGenerationConfig_.frameDuration = 0.18; // PC端使用中等长帧时长，平衡准确率和性能
     
     // 匹配配置 - PC端使用中等参数
@@ -94,9 +94,9 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createServerConfig
     config->peakDetectionConfig_.maxFreq = 6000;           // 最大频率
     
     // 指纹生成配置 - 服务器端使用较严格的参数
-    config->signatureGenerationConfig_.minFreqDelta = 40;   // 较大的最小频率差
-    config->signatureGenerationConfig_.maxFreqDelta = 250;  // 较小的最大频率差
-    config->signatureGenerationConfig_.maxTimeDelta = 4.0;  // 较大的最大时间差
+    config->signatureGenerationConfig_.minFreqDelta = 80;   // 较大的最小频率差，更高的区分度
+    config->signatureGenerationConfig_.maxFreqDelta = 800;  // 较大的最大频率差，宽广的匹配范围
+    config->signatureGenerationConfig_.maxTimeDelta = 0.4;  // 较宽松的最大时间差，减少因速度变化导致的错误
     config->signatureGenerationConfig_.frameDuration = 0.25; // 服务器端使用较长的长帧时长，优化准确率
     
     // 匹配配置 - 服务器端使用较宽松的参数

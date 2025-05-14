@@ -423,7 +423,10 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
         # Plot all peaks
         peaks_scatter = ax.scatter([peak[1] for peak in data['allPeaks']], 
                                   [peak[0] for peak in data['allPeaks']], 
-                                  color='blue', alpha=0.7, s=10, label='All Peaks')
+                                  c=[peak[2] for peak in data['allPeaks']], 
+                                  cmap='viridis', alpha=0.7, 
+                                  s=[10 + 40 * peak[2] for peak in data['allPeaks']], 
+                                  label='All Peaks')
         
         # Plot fingerprint points
         fp_scatter = ax.scatter([point[1] for point in data['fingerprintPoints']], 
@@ -439,7 +442,7 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
             if scatter_obj == peaks_scatter:
                 pos = scatter_obj.get_offsets()[index]
                 annot.xy = pos
-                text = f"Peak\nFreq: {data['allPeaks'][index][0]} Hz\nTime: {data['allPeaks'][index][1]:.2f} s"
+                text = f"Peak\nFreq: {data['allPeaks'][index][0]} Hz\nTime: {data['allPeaks'][index][1]:.2f} s\nAmplitude: {data['allPeaks'][index][2]:.4f}"
             else:  # fingerprint points
                 pos = scatter_obj.get_offsets()[index]
                 annot.xy = pos
@@ -452,7 +455,10 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
         # Plot all peaks
         peaks_scatter = ax.scatter([peak[1] for peak in data['allPeaks']], 
                                   [peak[0] for peak in data['allPeaks']], 
-                                  color='blue', alpha=0.7, s=10, label='All Peaks')
+                                  c=[peak[2] for peak in data['allPeaks']], 
+                                  cmap='viridis', alpha=0.7,
+                                  s=[10 + 40 * peak[2] for peak in data['allPeaks']],
+                                  label='All Peaks')
         
         # Plot fingerprint points
         fp_scatter = ax.scatter([point[1] for point in data['fingerprintPoints']], 
@@ -476,7 +482,7 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
             if scatter_obj == peaks_scatter:
                 pos = scatter_obj.get_offsets()[index]
                 annot.xy = pos
-                text = f"Peak\nFreq: {data['allPeaks'][index][0]} Hz\nTime: {data['allPeaks'][index][1]:.2f} s"
+                text = f"Peak\nFreq: {data['allPeaks'][index][0]} Hz\nTime: {data['allPeaks'][index][1]:.2f} s\nAmplitude: {data['allPeaks'][index][2]:.4f}"
             elif scatter_obj == fp_scatter:
                 pos = scatter_obj.get_offsets()[index]
                 annot.xy = pos
@@ -496,6 +502,10 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
     ax.set_ylim(0, 5000)  # Limit frequency display range
     ax.grid(True, alpha=0.3)
     ax.legend()
+    
+    # Add a colorbar for amplitude visualization
+    cbar = fig.colorbar(peaks_scatter, ax=ax, label='Amplitude', pad=0.01)
+    cbar.set_label('Amplitude')
     
     # Add playback position line if audio player is provided
     if audio_player and audio_player.data is not None:
@@ -823,7 +833,10 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
     # Plot source audio (top)
     peaks_scatter1 = ax1.scatter([peak[1] for peak in source_data['allPeaks']], 
                                 [peak[0] for peak in source_data['allPeaks']], 
-                                color='blue', alpha=0.3, s=10, label='Source Peaks')
+                                c=[peak[2] for peak in source_data['allPeaks']], 
+                                cmap='viridis', alpha=0.3, 
+                                s=[10 + 30 * peak[2] for peak in source_data['allPeaks']], 
+                                label='Source Peaks')
     
     fp_scatter1 = ax1.scatter([point[1] for point in source_data['fingerprintPoints']], 
                              [point[0] for point in source_data['fingerprintPoints']], 
@@ -879,10 +892,16 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
     ax1.grid(True, alpha=0.3)
     ax1.legend()
     
+    # Add colorbar for source amplitude visualization
+    cbar1 = fig.colorbar(peaks_scatter1, ax=ax1, label='Amplitude', pad=0.01)
+    
     # Plot query audio (bottom)
     peaks_scatter2 = ax2.scatter([peak[1] for peak in query_data['allPeaks']], 
                                 [peak[0] for peak in query_data['allPeaks']], 
-                                color='green', alpha=0.7, s=10, label='Query Peaks')
+                                c=[peak[2] for peak in query_data['allPeaks']], 
+                                cmap='viridis', alpha=0.7, 
+                                s=[10 + 30 * peak[2] for peak in query_data['allPeaks']], 
+                                label='Query Peaks')
     
     fp_scatter2 = ax2.scatter([point[1] for point in query_data['fingerprintPoints']], 
                              [point[0] for point in query_data['fingerprintPoints']], 
@@ -1138,6 +1157,9 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
     ax2.grid(True, alpha=0.3)
     ax2.legend()
     
+    # Add colorbar for query amplitude visualization
+    cbar2 = fig.colorbar(peaks_scatter2, ax=ax2, label='Amplitude', pad=0.01)
+    
     print(f"\n总共创建连线数量: {total_lines_created}")
     
     # 如果连线数远少于匹配点数，显示警告和建议
@@ -1170,7 +1192,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
                 if point_type == 'peak':
                     pos = scatter_obj.get_offsets()[index]
                     ax1_annot.xy = pos
-                    text = f"Peak\nFreq: {source_data['allPeaks'][index][0]} Hz\nTime: {source_data['allPeaks'][index][1]:.2f} s"
+                    text = f"Peak\nFreq: {source_data['allPeaks'][index][0]} Hz\nTime: {source_data['allPeaks'][index][1]:.2f} s\nAmplitude: {source_data['allPeaks'][index][2]:.4f}"
                 else:  # fingerprint
                     pos = scatter_obj.get_offsets()[index]
                     ax1_annot.xy = pos
@@ -1245,7 +1267,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, query_aud
                 if point_type == 'peak':
                     pos = scatter_obj.get_offsets()[index]
                     ax2_annot.xy = pos
-                    text = f"Peak\nFreq: {query_data['allPeaks'][index][0]} Hz\nTime: {query_data['allPeaks'][index][1]:.2f} s"
+                    text = f"Peak\nFreq: {query_data['allPeaks'][index][0]} Hz\nTime: {query_data['allPeaks'][index][1]:.2f} s\nAmplitude: {query_data['allPeaks'][index][2]:.4f}"
                 else:  # fingerprint
                     pos = scatter_obj.get_offsets()[index]
                     ax2_annot.xy = pos

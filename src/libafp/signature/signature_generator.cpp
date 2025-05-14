@@ -81,7 +81,9 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     // 计算每个短帧的持续时间（秒）
     double shortFrameDuration = static_cast<double>(hopSize_) / sampleRate_;
     
-    // 重新计算每个长帧包含的短帧数，使用配置的frameDuration_和hopSize决定的短帧时长
+    // 计算每个长帧需要的短帧数量 (理论上)
+    // 这个值现在只用于初始化信息输出，不再作为判断长帧累积的标准
+    // 实际处理中会根据时间戳来确定长帧边界
     shortFramesPerLongFrame_ = static_cast<size_t>(std::ceil(frameDuration_ / shortFrameDuration));
     
     // 清空所有缓冲区和历史记录
@@ -102,8 +104,8 @@ bool SignatureGenerator::init(const PCMFormat& format) {
               << ", 帧移大小=" << hopSize_
               << ", 帧重叠率=" << (1.0 - static_cast<double>(hopSize_) / fftSize_) * 100.0 << "%"
               << ", 每短帧持续时间=" << shortFrameDuration
-              << "s, 每长帧包含短帧数=" << shortFramesPerLongFrame_
-              << ", FFT大小=" << fftSize_ 
+              << "s, 理论上每长帧包含短帧数=" << shortFramesPerLongFrame_
+              << " (实际根据时间戳确定), FFT大小=" << fftSize_ 
               << ", 频率维度最大值范围=" << peakConfig.localMaxRange
               << ", 时间维度最大值范围=" << peakConfig.timeMaxRange << std::endl;
               
@@ -204,14 +206,48 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
                     visualizationData_.duration = channelBuffer.timestamp;
                 }
                 
-                // 检查是否积累了足够的短帧FFT结果来处理一个长帧
-                if (fftResultsMap_[channel].size() >= shortFramesPerLongFrame_) {
-                    // 处理长帧（从短帧FFT结果中提取峰值）
-                    processLongFrame(channel, fftResultsMap_[channel].front().timestamp);
+                // 修复: 检查是否积累了足够的短帧FFT结果形成一个长帧
+                // 不仅仅依赖帧数量，而是检查时间跨度是否达到了长帧持续时间
+                if (!fftResultsMap_[channel].empty()) {
+                    // 获取第一个短帧的时间戳
+                    double firstFrameTimestamp = fftResultsMap_[channel].front().timestamp;
+                    // 获取最新一个短帧的时间戳
+                    double latestFrameTimestamp = fftResultsMap_[channel].back().timestamp;
                     
-                    // 移除已处理的短帧FFT结果
-                    fftResultsMap_[channel].erase(fftResultsMap_[channel].begin(), 
-                                                fftResultsMap_[channel].begin() + shortFramesPerLongFrame_);
+                    // 计算时间跨度
+                    double timespan = latestFrameTimestamp - firstFrameTimestamp;
+                    
+                    // 检查时间跨度是否达到了长帧持续时间
+                    if (timespan >= frameDuration_) {
+                        // 处理长帧（从短帧FFT结果中提取峰值）
+                        // 使用第一个短帧的时间戳作为长帧的起始时间戳
+                        processLongFrame(channel, firstFrameTimestamp);
+                        
+                        // 移除已处理的短帧FFT结果，保留部分重叠以便于下一个长帧处理
+                        // 找到满足长帧持续时间的时间点
+                        size_t framesToRemove = 0;
+                        for (size_t i = 0; i < fftResultsMap_[channel].size(); ++i) {
+                            if (fftResultsMap_[channel][i].timestamp >= firstFrameTimestamp + frameDuration_ * 0.5) {
+                                // 找到长帧持续时间一半的位置，保留后半部分作为下一个长帧的开始
+                                framesToRemove = i;
+                                break;
+                            }
+                        }
+                        
+                        // 确保至少移除一个帧，避免死循环
+                        framesToRemove = std::max(framesToRemove, static_cast<size_t>(1));
+                        
+                        if (framesToRemove > 0 && framesToRemove < fftResultsMap_[channel].size()) {
+                            fftResultsMap_[channel].erase(
+                                fftResultsMap_[channel].begin(),
+                                fftResultsMap_[channel].begin() + framesToRemove
+                            );
+                        }
+                        
+                        // std::cout << "[Debug] 处理了一个长帧，移除了 " << framesToRemove 
+                        //           << " 个短帧，剩余 " << fftResultsMap_[channel].size() 
+                        //           << " 个短帧用于下一个长帧" << std::endl;
+                    }
                 }
             }
         }
@@ -356,7 +392,17 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
     // 需要至少 2*timeMaxRange + 1 个帧，才能在时间维度上检测局部最大值
     // 例如：对于timeMaxRange=3，我们需要比较当前帧与前后各3帧，共需7帧
     if (fftResults.empty() || fftResults.size() < 2*peakConfig.timeMaxRange + 1) {
+        std::cout << "[警告] 短帧数量不足，无法进行峰值检测。需要至少 " 
+                  << (2*peakConfig.timeMaxRange + 1) << " 个短帧，当前只有 " 
+                  << fftResults.size() << " 个短帧。" << std::endl;
         return peaks;
+    }
+    
+    // 检查时间跨度是否合理
+    double timespan = fftResults.back().timestamp - fftResults.front().timestamp;
+    if (timespan < frameDuration_ * 0.8) {  // 允许一定的误差，至少要有80%的长帧时长
+        std::cout << "[警告] 短帧时间跨度不足，当前跨度: " << timespan 
+                  << "s, 需要: " << frameDuration_ << "s" << std::endl;
     }
     
     // 创建一个候选峰值列表
@@ -435,10 +481,13 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
             
             // 添加到可视化数据（如果启用）
             if (collectVisualizationData_) {
-                visualizationData_.allPeaks.emplace_back(peak.frequency, peak.timestamp);
+                visualizationData_.allPeaks.emplace_back(peak.frequency, peak.timestamp, peak.magnitude);
             }
         }
     }
+    
+    // std::cout << "[Debug] 在长帧 " << longFrameTimestamp << "s 中检测到 " 
+    //           << candidatePeaks.size() << " 个候选峰值" << std::endl;
     
    // 限制每个长帧的峰值数量，同时保持原始相对顺序
    if (candidatePeaks.size() > peakConfig.maxPeaksPerFrame) {
@@ -477,6 +526,10 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
            filteredPeaks.push_back(candidatePeaks[idx]);
        }
        
+    //    std::cout << "[Debug] 峰值限制: 从 " << candidatePeaks.size() 
+    //              << " 个候选峰值中选取 " << filteredPeaks.size() 
+    //              << " 个最强峰值" << std::endl;
+       
        // 用筛选后的结果替换原始列表
        candidatePeaks = std::move(filteredPeaks);
    }
@@ -494,17 +547,37 @@ void SignatureGenerator::processLongFrame(
     
     // 确保有足够的短帧FFT结果用于提取峰值
     // 需要至少 2*timeMaxRange + 1 个短帧来检测时间维度上的峰值
-    size_t minRequiredFrames = std::max(shortFramesPerLongFrame_, 2 * peakConfig.timeMaxRange + 1);
+    size_t minRequiredFrames = 2 * peakConfig.timeMaxRange + 1;
     if (fftResultsMap_[channel].size() < minRequiredFrames) {
+        std::cout << "[警告] 通道 " << channel << " 的短帧数量不足，需要至少 " 
+                  << minRequiredFrames << " 个短帧来检测峰值，当前只有 " 
+                  << fftResultsMap_[channel].size() << " 个短帧" << std::endl;
         return;
     }
     
-    // 获取该通道的所有短帧FFT结果
-    std::vector<FFTResult> fftResults(fftResultsMap_[channel].begin(), 
-                                      fftResultsMap_[channel].begin() + shortFramesPerLongFrame_);
+    // 收集在长帧时长范围内的短帧结果
+    std::vector<FFTResult> frameResults;
+    double endTimestamp = frameTimestamp + frameDuration_;
+    
+    for (const auto& fftResult : fftResultsMap_[channel]) {
+        // 只添加在长帧时间范围内的短帧
+        if (fftResult.timestamp >= frameTimestamp && fftResult.timestamp < endTimestamp) {
+            frameResults.push_back(fftResult);
+        }
+    }
+    
+    if (frameResults.size() < minRequiredFrames) {
+        std::cout << "[警告] 长帧时长范围内的短帧数量不足，需要至少 " 
+                  << minRequiredFrames << " 个短帧来检测峰值，长帧时长范围内只有 " 
+                  << frameResults.size() << " 个短帧" << std::endl;
+        return;
+    }
+    
+    // std::cout << "[Debug] 处理长帧 (通道 " << channel << ")，时间戳: " << frameTimestamp 
+    //           << "s，使用 " << frameResults.size() << " 个短帧" << std::endl;
     
     // 从短帧FFT结果中提取峰值 - 现在提取的是时频域上的真正局部最大值
-    std::vector<Peak> currentPeaks = extractPeaksFromFFTResults(fftResults, frameTimestamp);
+    std::vector<Peak> currentPeaks = extractPeaksFromFFTResults(frameResults, frameTimestamp);
     
     if (!currentPeaks.empty()) {
         // 创建新帧并存储其峰值
@@ -528,13 +601,13 @@ void SignatureGenerator::processLongFrame(
             // 添加生成的指纹
             signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
             
-            // 调试输出
-            // if (!newPoints.empty()) {
-            //     std::cout << "[Debug] 从通道 " << channel << " 的三帧生成了 " << newPoints.size() 
-            //               << " 个指纹点，当前时间戳: " << frameTimestamp 
-            //               << "，最早峰值时间戳: " << currentPeaks.front().timestamp << std::endl;
-            // }
+            // std::cout << "[Debug] 从通道 " << channel << " 的三帧生成了 " << newPoints.size() 
+            //           << " 个指纹点，当前时间戳: " << frameTimestamp 
+            //           << "，识别到的峰值数: " << currentPeaks.size() << std::endl;
         }
+    } else {
+        std::cout << "[Debug] 通道 " << channel << " 在时间戳 " << frameTimestamp 
+                  << " 的长帧中没有检测到有效峰值" << std::endl;
     }
 }
 
@@ -549,17 +622,68 @@ std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
     if (frameHistory.size() < 3) {
         return signatures;
     }
+
+    // 获取指纹生成配置
+    const auto& signatureConfig = config_->getSignatureGenerationConfig();
     
     // 获取三个连续帧
     const Frame& frame1 = frameHistory[0]; // 最旧的帧
     const Frame& frame2 = frameHistory[1]; // 中间帧
     const Frame& frame3 = frameHistory[2]; // 最新的帧
     
+    // 统计不同原因的过滤数量
+    size_t totalPossibleCombinations = 0;
+    size_t filteredByFreqDelta1 = 0;
+    size_t filteredByTimeDelta1 = 0;
+    size_t filteredByFreqDelta2 = 0;
+    size_t filteredByTimeDelta2 = 0;
+    size_t filteredByFreqDeltaSimilarity = 0;
+    size_t acceptedCombinations = 0;
+    
     // 从中间帧选择锚点峰值
     for (const auto& anchorPeak : frame2.peaks) {
         // 从第一帧（最旧）和第三帧（最新）中选择目标峰值
         for (const auto& targetPeak1 : frame1.peaks) {
+            // 计算所有可能的组合数
+            totalPossibleCombinations += frame3.peaks.size();
+            
+            // 计算第一个频率差并检查是否在有效范围内
+            int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency - targetPeak1.frequency);
+            if (std::abs(freqDelta1) < signatureConfig.minFreqDelta || 
+                std::abs(freqDelta1) > signatureConfig.maxFreqDelta) {
+                filteredByFreqDelta1 += frame3.peaks.size();
+                continue; // 跳过频率差太小或太大的配对
+            }
+            
+            // 检查时间差是否在有效范围内
+            double timeDelta1 = anchorPeak.timestamp - targetPeak1.timestamp;
+            if (std::abs(timeDelta1) > signatureConfig.maxTimeDelta) {
+                filteredByTimeDelta1 += frame3.peaks.size();
+                continue; // 跳过时间差太大的配对
+            }
+
             for (const auto& targetPeak2 : frame3.peaks) {
+                // 计算第二个频率差并检查是否在有效范围内
+                int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency - anchorPeak.frequency);
+                if (std::abs(freqDelta2) < signatureConfig.minFreqDelta || 
+                    std::abs(freqDelta2) > signatureConfig.maxFreqDelta) {
+                    filteredByFreqDelta2++;
+                    continue; // 跳过频率差太小或太大的配对
+                }
+                
+                // 检查时间差是否在有效范围内
+                double timeDelta2 = targetPeak2.timestamp - anchorPeak.timestamp;
+                if (std::abs(timeDelta2) > signatureConfig.maxTimeDelta) {
+                    filteredByTimeDelta2++;
+                    continue; // 跳过时间差太大的配对
+                }
+                
+                // 确保频率差之间有足够的差异，避免生成类似的哈希值
+                if (std::abs(freqDelta1 - freqDelta2) < signatureConfig.minFreqDelta / 2) {
+                    filteredByFreqDeltaSimilarity++;
+                    continue; // 两个频率差太相似
+                }
+                
                 // 计算三帧组合哈希值，使用峰值的实际时间戳，而不是帧的时间戳
                 uint32_t hash = computeTripleFrameHash(anchorPeak, targetPeak1, targetPeak2);
                 
@@ -569,27 +693,6 @@ std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
                 signaturePoint.timestamp = anchorPeak.timestamp; // 使用锚点峰值的精确时间戳
                 signaturePoint.frequency = anchorPeak.frequency;
                 signaturePoint.amplitude = static_cast<uint32_t>(anchorPeak.magnitude * 1000);
-                
-                if (signatures.size() == 147) {
-                    int i = 0;
-                }
-                // 添加调试信息 - 确保std::hex只影响hash值的输出
-                // if (signatures.size() < 5) {
-                    // std::cout << "[Debug] 生成三帧指纹点: 锚点时间戳=" << anchorPeak.timestamp 
-                    //           << "s, 目标1时间戳=" << targetPeak1.timestamp
-                    //           << "s, 目标2时间戳=" << targetPeak2.timestamp
-                    //           << "s, 哈希=0x" << std::hex << hash << std::dec 
-                    //           << ", anchorPeak频率=" << anchorPeak.frequency << "Hz" 
-                    //           << ", targetPeak1频率=" << targetPeak1.frequency << "Hz" 
-                    //           << ", targetPeak2频率=" << targetPeak2.frequency << "Hz" 
-                    //           << ", anchorPeak幅度=" << anchorPeak.magnitude
-                    //           << ", targetPeak1幅度=" << targetPeak1.magnitude
-                    //           << ", targetPeak2幅度=" << targetPeak2.magnitude
-                    //           << ", anchorPeak时间戳=" << anchorPeak.timestamp << "s"
-                    //           << ", targetPeak1时间戳=" << targetPeak1.timestamp << "s"
-                    //           << ", targetPeak2时间戳=" << targetPeak2.timestamp << "s"
-                    //           << std::endl;
-                // }
                 
                 // Add to visualization data if enabled
                 if (collectVisualizationData_) {
@@ -601,8 +704,41 @@ std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
                 }
                 
                 signatures.push_back(signaturePoint);
+                acceptedCombinations++;
             }
         }
+    }
+    
+    // 输出过滤统计信息
+    if (totalPossibleCombinations > 0) {
+        // std::cout << "[过滤统计] 总可能组合: " << totalPossibleCombinations 
+        //           << ", 接受: " << acceptedCombinations 
+        //           << " (" << (acceptedCombinations * 100.0 / totalPossibleCombinations) << "%)" << std::endl;
+        
+        // std::cout << "[过滤详情] 由FreqDelta1过滤: " << filteredByFreqDelta1
+        //           << " (" << (filteredByFreqDelta1 * 100.0 / totalPossibleCombinations) << "%), "
+        //           << "由TimeDelta1过滤: " << filteredByTimeDelta1
+        //           << " (" << (filteredByTimeDelta1 * 100.0 / totalPossibleCombinations) << "%), "
+        //           << "由FreqDelta2过滤: " << filteredByFreqDelta2
+        //           << " (" << (filteredByFreqDelta2 * 100.0 / totalPossibleCombinations) << "%), "
+        //           << "由TimeDelta2过滤: " << filteredByTimeDelta2
+        //           << " (" << (filteredByTimeDelta2 * 100.0 / totalPossibleCombinations) << "%), "
+        //           << "由FreqDeltaSimilarity过滤: " << filteredByFreqDeltaSimilarity
+        //           << " (" << (filteredByFreqDeltaSimilarity * 100.0 / totalPossibleCombinations) << "%)" 
+        //           << std::endl;
+        
+        // // 输出过滤的具体阈值，便于调整参数
+        // std::cout << "[过滤阈值] minFreqDelta=" << signatureConfig.minFreqDelta
+        //           << ", maxFreqDelta=" << signatureConfig.maxFreqDelta
+        //           << ", maxTimeDelta=" << signatureConfig.maxTimeDelta
+        //           << ", freqDeltaSimilarityThreshold=" << (signatureConfig.minFreqDelta / 2)
+        //           << std::endl;
+        
+        // // 输出每帧峰值数量，便于理解组合总数
+        // std::cout << "[帧峰值数量] 帧1=" << frame1.peaks.size()
+        //           << ", 帧2=" << frame2.peaks.size()
+        //           << ", 帧3=" << frame3.peaks.size()
+        //           << std::endl;
     }
     
     return signatures;
@@ -643,16 +779,23 @@ uint32_t SignatureGenerator::computeTripleFrameHash(
     if (freqDelta1 < 0) freqDelta1Mapped |= 0x200;
     if (freqDelta2 < 0) freqDelta2Mapped |= 0x200;
     
-    // 创建第一组异或组合（频率差1和时间差1）
-    // 使用异或运算结合频率和时间信息，增加区分度
+    // 包含幅度信息 - 将三个峰值的相对幅度差作为哈希的一部分
+    // 这里我们只取几个bit来表示幅度差异，避免过度敏感
+    uint8_t ampFactor1 = static_cast<uint8_t>(std::min(3, static_cast<int>(anchorPeak.magnitude / std::max(0.001f, targetPeak1.magnitude))));
+    uint8_t ampFactor2 = static_cast<uint8_t>(std::min(3, static_cast<int>(anchorPeak.magnitude / std::max(0.001f, targetPeak2.magnitude))));
+    
+    // 创建第一组异或组合（频率差1和时间差1），加入幅度因子
+    // 使用异或运算结合频率、时间和幅度信息，增加区分度
     uint32_t combo1 = (freqDelta1Mapped & 0x3FF) ^ 
                      ((timeDelta1Unsigned & 0x03) << 8) ^ // 时间差低2位移到高位
-                     ((timeDelta1Unsigned & 0x3C) << 2);  // 时间差高4位调整位置
+                     ((timeDelta1Unsigned & 0x3C) << 2) ^ // 时间差高4位调整位置
+                     (ampFactor1 << 6);                   // 加入幅度因子
     
-    // 创建第二组异或组合（频率差2和时间差2）
+    // 创建第二组异或组合（频率差2和时间差2），加入幅度因子
     uint32_t combo2 = (freqDelta2Mapped & 0x3FF) ^ 
                      ((timeDelta2Unsigned & 0x03) << 8) ^ // 时间差低2位移到高位
-                     ((timeDelta2Unsigned & 0x3C) << 2);  // 时间差高4位调整位置
+                     ((timeDelta2Unsigned & 0x3C) << 2) ^ // 时间差高4位调整位置
+                     (ampFactor2 << 6);                   // 加入幅度因子
     
     // 确保组合结果不超过10位
     combo1 &= 0x3FF;
