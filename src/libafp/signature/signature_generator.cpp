@@ -40,6 +40,7 @@ SignatureGenerator::SignatureGenerator(std::shared_ptr<IPerformanceConfig> confi
     , fftSize_(config->getFFTConfig().fftSize)
     , hopSize_(config->getFFTConfig().hopSize)  // 从配置中获取帧移大小
     , frameDuration_(config->getSignatureGenerationConfig().frameDuration)  // 从配置中获取长帧时长
+    , peakTimeDuration_(config->getPeakDetectionConfig().peakTimeDuration)  // 从配置中获取峰值检测窗口
     , samplesPerFrame_(0)  // 将在init中设置
     , samplesPerShortFrame_(0)  // 将在init中设置
     , shortFramesPerLongFrame_(0)  // 将在init中设置
@@ -66,6 +67,12 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     // 计算每个长帧需要的样本数，使用配置的frameDuration_
     samplesPerFrame_ = static_cast<size_t>(frameDuration_ * sampleRate_);
     
+    // 如果未设置峰值检测时间窗口，使用默认值
+    if (peakTimeDuration_ <= 0) {
+        peakTimeDuration_ = frameDuration_ * 0.7; // 默认使用长帧时长的70%
+        std::cout << "[Debug] 峰值检测时间窗口未设置，使用默认值: " << peakTimeDuration_ << "s" << std::endl;
+    }
+    
     // 使用fftSize_作为短帧的样本数量，而不是基于时间计算
     samplesPerShortFrame_ = fftSize_;
     
@@ -91,6 +98,15 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     channelBuffers_.clear();
     fftResultsMap_.clear();
     
+    // 清空峰值缓存
+    peakCache_.clear();
+    
+    // 清空滑动窗口状态
+    peakDetectionWindowMap_.clear();
+    longFrameWindowMap_.clear();
+    lastProcessedShortFrameMap_.clear();
+    confirmedPeakWindowEndMap_.clear();
+    
     // Reset visualization data
     if (collectVisualizationData_) {
         visualizationData_ = VisualizationData();
@@ -99,6 +115,7 @@ bool SignatureGenerator::init(const PCMFormat& format) {
     
     std::cout << "[Debug] 初始化完成: 采样率=" << sampleRate_ 
               << "Hz, 长帧时长=" << frameDuration_
+              << "s, 峰值检测时间窗口=" << peakTimeDuration_
               << "s, 每长帧样本数=" << samplesPerFrame_
               << ", 每短帧样本数=" << samplesPerShortFrame_
               << ", 帧移大小=" << hopSize_
@@ -121,6 +138,43 @@ bool SignatureGenerator::saveVisualization(const std::string& filename) const {
     
     // Save data to JSON (no Python script generation)
     return Visualizer::saveVisualization(visualizationData_, filename);
+}
+
+// 清理过期的FFT和峰值数据
+void SignatureGenerator::cleanupOldData(uint32_t channel, double oldestTimeToKeep) {
+    // 清理较旧的FFT结果
+    if (!fftResultsMap_[channel].empty()) {
+        auto it = fftResultsMap_[channel].begin();
+        while (it != fftResultsMap_[channel].end() && it->timestamp < oldestTimeToKeep) {
+            ++it;
+        }
+        
+        size_t removedCount = std::distance(fftResultsMap_[channel].begin(), it);
+        if (removedCount > 0) {
+            fftResultsMap_[channel].erase(fftResultsMap_[channel].begin(), it);
+            
+            std::cout << "[DEBUG-清理] 通道" << channel 
+                      << "移除了" << removedCount << "个早于" 
+                      << oldestTimeToKeep << "s的短帧FFT结果" << std::endl;
+        }
+    }
+    
+    // 清理较旧的峰值
+    if (!peakCache_[channel].empty()) {
+        auto it = peakCache_[channel].begin();
+        while (it != peakCache_[channel].end() && it->timestamp < oldestTimeToKeep) {
+            ++it;
+        }
+        
+        size_t removedCount = std::distance(peakCache_[channel].begin(), it);
+        if (removedCount > 0) {
+            peakCache_[channel].erase(peakCache_[channel].begin(), it);
+            
+            std::cout << "[DEBUG-清理] 通道" << channel 
+                      << "移除了" << removedCount << "个早于" 
+                      << oldestTimeToKeep << "s的峰值" << std::endl;
+        }
+    }
 }
 
 // 流式处理音频数据
@@ -160,6 +214,22 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
             
             // 初始化该通道的FFT结果缓冲区
             fftResultsMap_[channel].clear();
+            
+            // 初始化该通道的滑动窗口状态
+            auto peakWindow = SlidingWindowInfo();
+            peakWindow.currentWindowStart = startTimestamp;
+            peakWindow.currentWindowEnd = startTimestamp + peakTimeDuration_;
+            peakWindow.nextWindowStartTime = startTimestamp + peakTimeDuration_;
+            peakWindow.windowReady = false;
+            peakDetectionWindowMap_[channel] = peakWindow;
+
+            auto longFrameWindow = SlidingWindowInfo();
+            longFrameWindow.currentWindowStart = startTimestamp;
+            longFrameWindow.currentWindowEnd = startTimestamp + frameDuration_;
+            longFrameWindow.nextWindowStartTime = startTimestamp + frameDuration_;
+            longFrameWindow.windowReady = false;
+            longFrameWindowMap_[channel] = longFrameWindow;
+            lastProcessedShortFrameMap_[channel] = startTimestamp;
         }
         
         ChannelBuffer& channelBuffer = channelBuffers_[channel];
@@ -206,48 +276,10 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
                     visualizationData_.duration = channelBuffer.timestamp;
                 }
                 
-                // 修复: 检查是否积累了足够的短帧FFT结果形成一个长帧
-                // 不仅仅依赖帧数量，而是检查时间跨度是否达到了长帧持续时间
-                if (!fftResultsMap_[channel].empty()) {
-                    // 获取第一个短帧的时间戳
-                    double firstFrameTimestamp = fftResultsMap_[channel].front().timestamp;
-                    // 获取最新一个短帧的时间戳
-                    double latestFrameTimestamp = fftResultsMap_[channel].back().timestamp;
-                    
-                    // 计算时间跨度
-                    double timespan = latestFrameTimestamp - firstFrameTimestamp;
-                    
-                    // 检查时间跨度是否达到了长帧持续时间
-                    if (timespan >= frameDuration_) {
-                        // 处理长帧（从短帧FFT结果中提取峰值）
-                        // 使用第一个短帧的时间戳作为长帧的起始时间戳
-                        processLongFrame(channel, firstFrameTimestamp);
-                        
-                        // 移除已处理的短帧FFT结果，保留部分重叠以便于下一个长帧处理
-                        // 找到满足长帧持续时间的时间点
-                        size_t framesToRemove = 0;
-                        for (size_t i = 0; i < fftResultsMap_[channel].size(); ++i) {
-                            if (fftResultsMap_[channel][i].timestamp >= firstFrameTimestamp + frameDuration_ * 0.5) {
-                                // 找到长帧持续时间一半的位置，保留后半部分作为下一个长帧的开始
-                                framesToRemove = i;
-                                break;
-                            }
-                        }
-                        
-                        // 确保至少移除一个帧，避免死循环
-                        framesToRemove = std::max(framesToRemove, static_cast<size_t>(1));
-                        
-                        if (framesToRemove > 0 && framesToRemove < fftResultsMap_[channel].size()) {
-                            fftResultsMap_[channel].erase(
-                                fftResultsMap_[channel].begin(),
-                                fftResultsMap_[channel].begin() + framesToRemove
-                            );
-                        }
-                        
-                        // std::cout << "[Debug] 处理了一个长帧，移除了 " << framesToRemove 
-                        //           << " 个短帧，剩余 " << fftResultsMap_[channel].size() 
-                        //           << " 个短帧用于下一个长帧" << std::endl;
-                    }
+                // 更新滑动窗口状态并检查是否需要进行峰值检测
+                if (updateSlidingWindows(channel, channelBuffer.timestamp)) {
+                    // 进行峰值检测
+                    detectPeaksInSlidingWindow(channel);
                 }
             }
         }
@@ -286,8 +318,39 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
     }
     
     size_t newSignaturesGenerated = signatures_.size() - initialSignatureCount;
-    std::cout << "[Debug] 本次调用生成了 " << newSignaturesGenerated << " 个指纹点，总共有 " 
+    std::cout << "[DEBUG-统计] 本次调用生成了 " << newSignaturesGenerated << " 个指纹点，总共有 " 
               << signatures_.size() << " 个指纹点" << std::endl;
+    
+    // 输出峰值缓存统计
+    size_t totalPeaks = 0;
+    for (const auto& [channelId, peaks] : peakCache_) {
+        totalPeaks += peaks.size();
+        std::cout << "[DEBUG-统计] 通道" << channelId << "当前有" << peaks.size() << "个峰值在缓存中";
+        if (!peaks.empty()) {
+            std::cout << ", 时间范围: " << peaks.front().timestamp << "s - " << peaks.back().timestamp << "s";
+        }
+        std::cout << std::endl;
+    }
+    
+    // 输出长帧历史统计
+    size_t totalFrames = 0;
+    for (const auto& [channelId, frames] : frameHistoryMap_) {
+        totalFrames += frames.size();
+        std::cout << "[DEBUG-统计] 通道" << channelId << "当前有" << frames.size() << "个长帧在历史队列中";
+        if (!frames.empty()) {
+            std::cout << ", 时间范围: " << frames.front().timestamp << "s - " << frames.back().timestamp << "s";
+            
+            // 计算每个长帧的峰值数
+            std::cout << ", 各帧峰值数: ";
+            for (const auto& frame : frames) {
+                std::cout << frame.peaks.size() << " ";
+            }
+        }
+        std::cout << std::endl;
+    }
+    
+    std::cout << "[DEBUG-统计] 总计: " << totalPeaks << "个峰值缓存, " 
+              << totalFrames << "个长帧, " << signatures_.size() << "个指纹点" << std::endl;
     
     // 输出每个通道的缓冲区状态
     for (const auto& [channel, buffer] : channelBuffers_) {
@@ -296,9 +359,17 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
                   << " 样本，缓冲区时间戳: " << buffer.timestamp << std::endl;
     }
     
-    // 输出每个通道的帧历史记录数量
-    for (const auto& [channel, history] : frameHistoryMap_) {
-        std::cout << "[Debug] 通道 " << channel << " 的帧历史包含 " << history.size() << " 帧" << std::endl;
+    // 输出每个通道的滑动窗口状态
+    for (const auto& [channel, windowInfo] : peakDetectionWindowMap_) {
+        std::cout << "[Debug] 通道 " << channel << " 的峰值检测窗口: " 
+                  << windowInfo.currentWindowStart << "s - " << windowInfo.currentWindowEnd 
+                  << "s, 就绪状态: " << (windowInfo.windowReady ? "就绪" : "未就绪") << std::endl;
+    }
+    
+    for (const auto& [channel, windowInfo] : longFrameWindowMap_) {
+        std::cout << "[Debug] 通道 " << channel << " 的长帧窗口: " 
+                  << windowInfo.currentWindowStart << "s - " << windowInfo.currentWindowEnd 
+                  << "s, 就绪状态: " << (windowInfo.windowReady ? "就绪" : "未就绪") << std::endl;
     }
 
     return newSignaturesGenerated > 0 || signatures_.size() > initialSignatureCount;
@@ -377,12 +448,16 @@ void SignatureGenerator::processShortFrame(const float* frameBuffer,
     
     // 将FFT结果添加到通道的FFT结果缓冲区
     fftResultsMap_[channel].push_back(std::move(fftResult));
+    
+    // 更新最后处理的短帧时间戳
+    lastProcessedShortFrameMap_[channel] = frameTimestamp;
 }
 
-// 从短帧FFT结果缓冲区中提取峰值
+// 从短帧FFT结果缓冲区中提取峰值 - 基于滑动窗口
 std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
     const std::vector<FFTResult>& fftResults,
-    double longFrameTimestamp) {
+    double windowStartTime,
+    double windowEndTime) {
     
     std::vector<Peak> peaks;
     
@@ -415,6 +490,11 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
          ++frameIdx) {
         
         const auto& currentFrame = fftResults[frameIdx];
+        
+        // 只处理在时间窗口范围内的帧
+        if (currentFrame.timestamp < windowStartTime || currentFrame.timestamp >= windowEndTime) {
+            continue;
+        }
         
         // 跳过频谱边缘的频率bin，以便在频率维度上比较
         for (size_t freqIdx = peakConfig.localMaxRange; 
@@ -486,140 +566,129 @@ std::vector<Peak> SignatureGenerator::extractPeaksFromFFTResults(
         }
     }
     
-    // std::cout << "[Debug] 在长帧 " << longFrameTimestamp << "s 中检测到 " 
-    //           << candidatePeaks.size() << " 个候选峰值" << std::endl;
-    
-   // 限制每个长帧的峰值数量，同时保持原始相对顺序
-   if (candidatePeaks.size() > peakConfig.maxPeaksPerFrame) {
-       // 创建原始索引和幅度的对组
-       std::vector<std::pair<size_t, float>> indexMagnitudePairs;
-       indexMagnitudePairs.reserve(candidatePeaks.size());
-       
-       for (size_t i = 0; i < candidatePeaks.size(); ++i) {
-           indexMagnitudePairs.emplace_back(i, candidatePeaks[i].magnitude);
-       }
-       
-       // 部分排序，仅找出前maxPeaksPerFrame个最大元素的索引
-       std::partial_sort(
-           indexMagnitudePairs.begin(),
-           indexMagnitudePairs.begin() + peakConfig.maxPeaksPerFrame,
-           indexMagnitudePairs.end(),
-           [](const auto& a, const auto& b) { return a.second > b.second; }
-       );
-       
-       // 提取前maxPeaksPerFrame个最大幅度元素的索引
-       std::vector<size_t> topIndices;
-       topIndices.reserve(peakConfig.maxPeaksPerFrame);
-       
-       for (size_t i = 0; i < peakConfig.maxPeaksPerFrame; ++i) {
-           topIndices.push_back(indexMagnitudePairs[i].first);
-       }
-       
-       // 按原始索引排序，这样可以保持原始顺序
-       std::sort(topIndices.begin(), topIndices.end());
-       
-       // 创建新的结果列表，保持原始顺序
-       std::vector<Peak> filteredPeaks;
-       filteredPeaks.reserve(peakConfig.maxPeaksPerFrame);
-       
-       for (size_t idx : topIndices) {
-           filteredPeaks.push_back(candidatePeaks[idx]);
-       }
-       
-    //    std::cout << "[Debug] 峰值限制: 从 " << candidatePeaks.size() 
-    //              << " 个候选峰值中选取 " << filteredPeaks.size() 
-    //              << " 个最强峰值" << std::endl;
-       
-       // 用筛选后的结果替换原始列表
-       candidatePeaks = std::move(filteredPeaks);
-   }
+    std::cout << "[Debug] 在时间窗口 " << windowStartTime << "s - " << windowEndTime 
+              << "s 中检测到 " << candidatePeaks.size() << " 个候选峰值" << std::endl;
     
     return candidatePeaks;
 }
 
-// 处理长帧音频数据，从短帧FFT结果中提取峰值
-void SignatureGenerator::processLongFrame(
-                               uint32_t channel,
-                               double frameTimestamp) {
-    
-    // 获取当前使用的峰值检测配置
-    const auto& peakConfig = config_->getPeakDetectionConfig();
-    
-    // 确保有足够的短帧FFT结果用于提取峰值
-    // 需要至少 2*timeMaxRange + 1 个短帧来检测时间维度上的峰值
-    size_t minRequiredFrames = 2 * peakConfig.timeMaxRange + 1;
-    if (fftResultsMap_[channel].size() < minRequiredFrames) {
-        std::cout << "[警告] 通道 " << channel << " 的短帧数量不足，需要至少 " 
-                  << minRequiredFrames << " 个短帧来检测峰值，当前只有 " 
-                  << fftResultsMap_[channel].size() << " 个短帧" << std::endl;
+// 处理长帧音频数据，基于滑动窗口
+void SignatureGenerator::processLongFrame(uint32_t channel) {
+    // 获取当前通道的长帧滑动窗口信息
+    if (longFrameWindowMap_.find(channel) == longFrameWindowMap_.end()) {
+        std::cout << "[DEBUG-长帧处理] 通道" << channel << "没有长帧滑动窗口信息" << std::endl;
         return;
     }
     
-    // 收集在长帧时长范围内的短帧结果
-    std::vector<FFTResult> frameResults;
-    double endTimestamp = frameTimestamp + frameDuration_;
+    SlidingWindowInfo& windowInfo = longFrameWindowMap_[channel];
+    double frameStartTime = windowInfo.currentWindowStart;
+    double frameEndTime = windowInfo.currentWindowEnd;
     
-    for (const auto& fftResult : fftResultsMap_[channel]) {
-        // 只添加在长帧时间范围内的短帧
-        if (fftResult.timestamp >= frameTimestamp && fftResult.timestamp < endTimestamp) {
-            frameResults.push_back(fftResult);
-        }
-    }
-    
-    if (frameResults.size() < minRequiredFrames) {
-        std::cout << "[警告] 长帧时长范围内的短帧数量不足，需要至少 " 
-                  << minRequiredFrames << " 个短帧来检测峰值，长帧时长范围内只有 " 
-                  << frameResults.size() << " 个短帧" << std::endl;
+    // 检查峰值缓存
+    if (peakCache_[channel].empty()) {
+        std::cout << "[DEBUG-长帧处理] 通道" << channel << "的峰值缓存为空，无法创建长帧" << std::endl;
         return;
     }
     
-    // std::cout << "[Debug] 处理长帧 (通道 " << channel << ")，时间戳: " << frameTimestamp 
-    //           << "s，使用 " << frameResults.size() << " 个短帧" << std::endl;
+    std::cout << "[DEBUG-长帧处理] 通道" << channel << "开始处理长帧，时间范围: " << frameStartTime 
+              << "s - " << frameEndTime << "s, 当前峰值缓存大小: " << peakCache_[channel].size() << std::endl;
     
-    // 从短帧FFT结果中提取峰值 - 现在提取的是时频域上的真正局部最大值
-    std::vector<Peak> currentPeaks = extractPeaksFromFFTResults(frameResults, frameTimestamp);
+    // 从峰值缓存中收集位于当前长帧时间范围内的峰值
+    std::vector<Peak> framePeaks;
     
-    if (!currentPeaks.empty()) {
-        // 创建新帧并存储其峰值
-        Frame newFrame;
-        newFrame.peaks = currentPeaks;
-        newFrame.timestamp = frameTimestamp; // 保留长帧时间戳用于标识帧
+    // 输出详细的峰值时间戳信息，以便调试
+    std::cout << "[DEBUG-详细] 通道" << channel << "检查时间范围" << frameStartTime 
+              << "s - " << frameEndTime << "s的峰值:" << std::endl;
+    std::cout << "[DEBUG-详细] 峰值缓存中共有" << peakCache_[channel].size() << "个峰值，时间戳: ";
+    
+    // 输出所有峰值的时间戳
+    for (const auto& peak : peakCache_[channel]) {
+        std::cout << peak.timestamp << "s(" << peak.frequency << "Hz) ";
         
-        // 为当前通道添加帧历史记录
-        frameHistoryMap_[channel].push_back(newFrame);
-        
-        // 保持历史帧队列的大小不超过FRAME_BUFFER_SIZE
-        while (frameHistoryMap_[channel].size() > FRAME_BUFFER_SIZE) {
-            frameHistoryMap_[channel].pop_front();
+        // 检查是否在当前长帧时间范围内
+        if (peak.timestamp >= frameStartTime && peak.timestamp < frameEndTime) {
+            framePeaks.push_back(peak);
+            std::cout << "✓ ";  // 标记包含在当前帧内的峰值
+        } else {
+            std::cout << "✗ ";  // 标记不在当前帧内的峰值
         }
-        
-        // 当累积了足够数量的帧（3帧）时，生成跨帧指纹
-        if (frameHistoryMap_[channel].size() == FRAME_BUFFER_SIZE) {
-            std::vector<SignaturePoint> newPoints = generateTripleFrameSignatures(
-                frameHistoryMap_[channel], frameTimestamp);
-            
-            // 添加生成的指纹
-            signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
-            
-            // std::cout << "[Debug] 从通道 " << channel << " 的三帧生成了 " << newPoints.size() 
-            //           << " 个指纹点，当前时间戳: " << frameTimestamp 
-            //           << "，识别到的峰值数: " << currentPeaks.size() << std::endl;
+    }
+    std::cout << std::endl;
+    
+    // 如果当前长帧时间范围内没有足够的峰值，放弃创建长帧
+    if (framePeaks.empty()) {
+        std::cout << "[DEBUG-长帧处理] 通道" << channel << "在时间范围" << frameStartTime 
+                  << "s - " << frameEndTime << "s内没有峰值，放弃创建长帧" << std::endl;
+        return;
+    }
+    
+    std::cout << "[DEBUG-长帧处理] 通道" << channel << "在时间范围" << frameStartTime 
+              << "s - " << frameEndTime << "s内找到" << framePeaks.size() << "个峰值" << std::endl;
+    
+    // 创建新帧并存储其峰值
+    Frame newFrame;
+    newFrame.peaks = framePeaks;
+    newFrame.timestamp = frameStartTime; // 保留长帧开始时间作为帧时间戳
+
+    // peakCache_移除当前长帧时间范围内的峰值：peak.timestamp >= frameStartTime && peak.timestamp < frameEndTime
+    for (auto it = peakCache_[channel].begin(); it != peakCache_[channel].end();) {
+        if (it->timestamp >= frameStartTime && it->timestamp < frameEndTime) {
+            it = peakCache_[channel].erase(it);
+        } else {
+            ++it;
         }
+    }
+    
+    std::cout << "[DEBUG-长帧处理] 通道" << channel << "创建了新的长帧，峰值数量: " 
+              << framePeaks.size() << ", 历史帧数量: " << frameHistoryMap_[channel].size() << std::endl;
+
+    // 为当前通道添加帧历史记录
+    frameHistoryMap_[channel].push_back(newFrame);
+    
+    // 保持历史帧队列的大小不超过FRAME_BUFFER_SIZE
+    if (frameHistoryMap_[channel].size() > FRAME_BUFFER_SIZE) {
+        size_t framesToRemove = frameHistoryMap_[channel].size() - FRAME_BUFFER_SIZE;
+        frameHistoryMap_[channel].erase(
+            frameHistoryMap_[channel].begin(),
+            frameHistoryMap_[channel].begin() + framesToRemove
+        );
+        std::cout << "[DEBUG-长帧处理] 通道" << channel << "从历史队列中移除了" 
+                  << framesToRemove << "个旧帧，保持队列大小为" << FRAME_BUFFER_SIZE << std::endl;
+    }
+    
+    // 当累积了足够数量的帧（3帧）时，生成跨帧指纹
+    if (frameHistoryMap_[channel].size() == FRAME_BUFFER_SIZE) {
+        std::cout << "[DEBUG-长帧处理] 通道" << channel << "已累积" << FRAME_BUFFER_SIZE 
+                  << "个长帧，准备生成指纹，帧时间戳: ";
+        for (const auto& frame : frameHistoryMap_[channel]) {
+            std::cout << frame.timestamp << "s(" << frame.peaks.size() << "个峰值) ";
+        }
+        std::cout << std::endl;
+        
+        std::vector<SignaturePoint> newPoints = generateTripleFrameSignatures(frameHistoryMap_[channel]);
+        
+        std::cout << "[DEBUG-长帧处理] 通道" << channel << "生成了" << newPoints.size() 
+                  << "个新的指纹点，当前总指纹数: " << signatures_.size() << " -> " 
+                  << (signatures_.size() + newPoints.size()) << std::endl;
+        
+        // 添加生成的指纹
+        signatures_.insert(signatures_.end(), newPoints.begin(), newPoints.end());
     } else {
-        std::cout << "[Debug] 通道 " << channel << " 在时间戳 " << frameTimestamp 
-                  << " 的长帧中没有检测到有效峰值" << std::endl;
+        std::cout << "[DEBUG-长帧处理] 通道" << channel << "长帧数量(" 
+                  << frameHistoryMap_[channel].size() << ")不足" << FRAME_BUFFER_SIZE 
+                  << "，暂不生成指纹" << std::endl;
     }
 }
 
-// 从三帧峰值生成指纹
+// 从三帧峰值生成指纹 - 更新为只接收帧历史参数
 std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
-    const std::deque<Frame>& frameHistory,
-    double currentTimestamp) {
+    const std::deque<Frame>& frameHistory) {
     
     std::vector<SignaturePoint> signatures;
     
     // 确保我们有3帧
     if (frameHistory.size() < 3) {
+        std::cout << "[DEBUG-指纹生成] 帧历史不足3帧，无法生成指纹" << std::endl;
         return signatures;
     }
 
@@ -631,14 +700,29 @@ std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
     const Frame& frame2 = frameHistory[1]; // 中间帧
     const Frame& frame3 = frameHistory[2]; // 最新的帧
     
+    std::cout << "[DEBUG-指纹生成] 准备从3帧生成指纹，帧1: " << frame1.timestamp << "s(" 
+              << frame1.peaks.size() << "峰值), 帧2: " << frame2.timestamp << "s(" 
+              << frame2.peaks.size() << "峰值), 帧3: " << frame3.timestamp << "s(" 
+              << frame3.peaks.size() << "峰值)" << std::endl;
+    
     // 统计不同原因的过滤数量
     size_t totalPossibleCombinations = 0;
-    size_t filteredByFreqDelta1 = 0;
+    size_t filteredByFreqDelta1_min = 0;
+    size_t filteredByFreqDelta1_max = 0;
     size_t filteredByTimeDelta1 = 0;
     size_t filteredByFreqDelta2 = 0;
     size_t filteredByTimeDelta2 = 0;
     size_t filteredByFreqDeltaSimilarity = 0;
     size_t acceptedCombinations = 0;
+    
+    // 潜在组合总数
+    size_t theoreticalCombinations = frame1.peaks.size() * frame2.peaks.size() * frame3.peaks.size();
+    std::cout << "[DEBUG-指纹生成] 理论可能的峰值组合数: " << theoreticalCombinations << std::endl;
+    
+    if (frame1.peaks.empty() || frame2.peaks.empty() || frame3.peaks.empty()) {
+        std::cout << "[警告-指纹生成] 存在空帧，无法生成指纹" << std::endl;
+        return signatures;
+    }
     
     // 从中间帧选择锚点峰值
     for (const auto& anchorPeak : frame2.peaks) {
@@ -649,10 +733,13 @@ std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
             
             // 计算第一个频率差并检查是否在有效范围内
             int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency - targetPeak1.frequency);
-            if (std::abs(freqDelta1) < signatureConfig.minFreqDelta || 
-                std::abs(freqDelta1) > signatureConfig.maxFreqDelta) {
-                filteredByFreqDelta1 += frame3.peaks.size();
-                continue; // 跳过频率差太小或太大的配对
+            if (std::abs(freqDelta1) < signatureConfig.minFreqDelta) {
+                filteredByFreqDelta1_min += frame3.peaks.size();
+                continue; // 跳过频率差太小
+            }
+            if (std::abs(freqDelta1) > signatureConfig.maxFreqDelta) {
+                filteredByFreqDelta1_max += frame3.peaks.size();
+                continue; // 跳过频率差太大
             }
             
             // 检查时间差是否在有效范围内
@@ -711,34 +798,25 @@ std::vector<SignaturePoint> SignatureGenerator::generateTripleFrameSignatures(
     
     // 输出过滤统计信息
     if (totalPossibleCombinations > 0) {
-        // std::cout << "[过滤统计] 总可能组合: " << totalPossibleCombinations 
-        //           << ", 接受: " << acceptedCombinations 
-        //           << " (" << (acceptedCombinations * 100.0 / totalPossibleCombinations) << "%)" << std::endl;
+        std::cout << "[DEBUG-指纹生成] 总可能组合: " << totalPossibleCombinations 
+                  << ", 接受: " << acceptedCombinations 
+                  << " (" << (acceptedCombinations * 100.0 / totalPossibleCombinations) << "%)" << std::endl;
         
-        // std::cout << "[过滤详情] 由FreqDelta1过滤: " << filteredByFreqDelta1
-        //           << " (" << (filteredByFreqDelta1 * 100.0 / totalPossibleCombinations) << "%), "
-        //           << "由TimeDelta1过滤: " << filteredByTimeDelta1
-        //           << " (" << (filteredByTimeDelta1 * 100.0 / totalPossibleCombinations) << "%), "
-        //           << "由FreqDelta2过滤: " << filteredByFreqDelta2
-        //           << " (" << (filteredByFreqDelta2 * 100.0 / totalPossibleCombinations) << "%), "
-        //           << "由TimeDelta2过滤: " << filteredByTimeDelta2
-        //           << " (" << (filteredByTimeDelta2 * 100.0 / totalPossibleCombinations) << "%), "
-        //           << "由FreqDeltaSimilarity过滤: " << filteredByFreqDeltaSimilarity
-        //           << " (" << (filteredByFreqDeltaSimilarity * 100.0 / totalPossibleCombinations) << "%)" 
-        //           << std::endl;
-        
-        // // 输出过滤的具体阈值，便于调整参数
-        // std::cout << "[过滤阈值] minFreqDelta=" << signatureConfig.minFreqDelta
-        //           << ", maxFreqDelta=" << signatureConfig.maxFreqDelta
-        //           << ", maxTimeDelta=" << signatureConfig.maxTimeDelta
-        //           << ", freqDeltaSimilarityThreshold=" << (signatureConfig.minFreqDelta / 2)
-        //           << std::endl;
-        
-        // // 输出每帧峰值数量，便于理解组合总数
-        // std::cout << "[帧峰值数量] 帧1=" << frame1.peaks.size()
-        //           << ", 帧2=" << frame2.peaks.size()
-        //           << ", 帧3=" << frame3.peaks.size()
-        //           << std::endl;
+        std::cout << "[DEBUG-指纹生成] 由FreqDelta1_min过滤: " << filteredByFreqDelta1_min
+                  << " (" << (filteredByFreqDelta1_min * 100.0 / totalPossibleCombinations) << "%), "
+                  << "由FreqDelta1_max过滤: " << filteredByFreqDelta1_max
+                  << " (" << (filteredByFreqDelta1_max * 100.0 / totalPossibleCombinations) << "%), "
+                  << "由TimeDelta1过滤: " << filteredByTimeDelta1
+                  << " (" << (filteredByTimeDelta1 * 100.0 / totalPossibleCombinations) << "%), "
+                  << "由FreqDelta2过滤: " << filteredByFreqDelta2
+                  << " (" << (filteredByFreqDelta2 * 100.0 / totalPossibleCombinations) << "%), "
+                  << "由TimeDelta2过滤: " << filteredByTimeDelta2
+                  << " (" << (filteredByTimeDelta2 * 100.0 / totalPossibleCombinations) << "%), "
+                  << "由FreqDeltaSimilarity过滤: " << filteredByFreqDeltaSimilarity
+                  << " (" << (filteredByFreqDeltaSimilarity * 100.0 / totalPossibleCombinations) << "%)" 
+                  << std::endl;
+    } else {
+        std::cout << "[警告-指纹生成] 没有可能的峰值组合，无法生成指纹" << std::endl;
     }
     
     return signatures;
@@ -818,6 +896,13 @@ void SignatureGenerator::resetSignatures() {
     frameHistoryMap_.clear();
     channelBuffers_.clear();
     fftResultsMap_.clear();
+    peakCache_.clear();
+    
+    // 清空滑动窗口状态
+    peakDetectionWindowMap_.clear();
+    longFrameWindowMap_.clear();
+    lastProcessedShortFrameMap_.clear();
+    confirmedPeakWindowEndMap_.clear();
     
     // Reset visualization data
     if (collectVisualizationData_) {
@@ -827,4 +912,257 @@ void SignatureGenerator::resetSignatures() {
     std::cout << "[Debug] 已重置所有签名、帧历史和通道缓冲区" << std::endl;
 }
 
+// 维护滑动窗口状态 - 返回是否需要处理窗口
+bool SignatureGenerator::updateSlidingWindows(uint32_t channel, double timestamp) {
+    // 获取峰值检测配置
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    
+    // 初始化滑动窗口信息（如果不存在）
+    if (peakDetectionWindowMap_.find(channel) == peakDetectionWindowMap_.end()) {
+        // 初始化窗口起始时间为第一个短帧时间戳
+        if (!fftResultsMap_[channel].empty()) {
+            peakDetectionWindowMap_[channel] = SlidingWindowInfo();
+
+            double firstTimestamp = fftResultsMap_[channel].front().timestamp;
+            peakDetectionWindowMap_[channel].currentWindowStart = firstTimestamp;
+            peakDetectionWindowMap_[channel].currentWindowEnd = firstTimestamp + peakTimeDuration_;
+            peakDetectionWindowMap_[channel].nextWindowStartTime = firstTimestamp + peakTimeDuration_;
+        }
+    }
+    
+    // 获取当前通道的滑动窗口信息
+    SlidingWindowInfo& windowInfo = peakDetectionWindowMap_[channel];
+    
+    // 检查是否有足够的短帧跨度用于峰值检测窗口
+    if (fftResultsMap_[channel].size() < 2 * peakConfig.timeMaxRange + 1) {
+        return false; // 短帧数量不足
+    }
+    
+    // 检查最新时间戳是否达到当前窗口的结束时间
+    // 时间窗口需要满足：windowEnd已经收到且后续还有足够的帧用于后向比较
+    bool needProcess = false;
+    
+    double earliestTimestamp = fftResultsMap_[channel].front().timestamp;
+    double latestTimestamp = fftResultsMap_[channel].back().timestamp;
+    
+    // 计算最后一帧后还需要的额外时间用于边界完整性
+    double boundaryTimeNeeded = peakConfig.timeMaxRange * static_cast<double>(hopSize_) / sampleRate_;
+    
+    // 如果当前窗口已经被采集完整
+    if (timestamp >= windowInfo.currentWindowEnd + boundaryTimeNeeded) {
+        // 窗口收集完成
+        windowInfo.windowReady = true;
+        needProcess = true;
+        
+        std::cout << "[DEBUG-窗口] 通道" << channel << "峰值检测窗口" 
+                  << windowInfo.currentWindowStart << "s-" << windowInfo.currentWindowEnd 
+                  << "s准备好处理，边界缓冲:" << boundaryTimeNeeded << "s" << std::endl;
+    }
+    
+    // 更新长帧滑动窗口信息
+    if (longFrameWindowMap_.find(channel) == longFrameWindowMap_.end()) {
+        // 初始化窗口起始时间为第一个确认峰值的时间戳
+        if (!peakCache_[channel].empty()) {
+            longFrameWindowMap_[channel] = SlidingWindowInfo();
+
+            double firstPeakTimestamp = peakCache_[channel].front().timestamp;
+            longFrameWindowMap_[channel].currentWindowStart = firstPeakTimestamp;
+            longFrameWindowMap_[channel].currentWindowEnd = firstPeakTimestamp + frameDuration_;
+            longFrameWindowMap_[channel].nextWindowStartTime = firstPeakTimestamp + frameDuration_ / 3.0;
+        }
+    }
+    
+    return needProcess;
+}
+
+// 基于滑动窗口检测峰值
+void SignatureGenerator::detectPeaksInSlidingWindow(uint32_t channel) {
+    // 获取当前通道的滑动窗口信息
+    if (peakDetectionWindowMap_.find(channel) == peakDetectionWindowMap_.end() ||
+        !peakDetectionWindowMap_[channel].windowReady) {
+        return; // 窗口未准备好
+    }
+    
+    SlidingWindowInfo& windowInfo = peakDetectionWindowMap_[channel];
+    
+    // 获取当前窗口的时间范围
+    double windowStart = windowInfo.currentWindowStart;
+    double windowEnd = windowInfo.currentWindowEnd;
+    
+    std::cout << "[DEBUG-峰值检测] 通道" << channel << "在窗口" 
+              << windowStart << "s-" << windowEnd 
+              << "s中检测峰值" << std::endl;
+    
+    // 选择在当前窗口时间范围内的短帧
+    std::vector<FFTResult> windowFrames;
+    for (const auto& fftResult : fftResultsMap_[channel]) {
+        if (fftResult.timestamp >= windowStart && fftResult.timestamp < windowEnd) {
+            windowFrames.push_back(fftResult);
+        }
+    }
+    
+    // 确保有足够的帧用于峰值检测
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    if (windowFrames.size() < 2 * peakConfig.timeMaxRange + 1) {
+        std::cout << "[DEBUG-峰值检测] 通道" << channel << "窗口内短帧数量不足: " 
+                 << windowFrames.size() << " < " << (2 * peakConfig.timeMaxRange + 1) << std::endl;
+        return;
+    }
+    
+    // 检测峰值
+    std::vector<Peak> newPeaks = extractPeaksFromFFTResults(windowFrames, windowStart, windowEnd);
+    
+    std::vector<Peak> uniquePeaks;
+    if (!newPeaks.empty()) {
+        // 详细输出每个即将添加的峰值
+        std::cout << "[DEBUG-峰值添加] 通道" << channel << "检测到" << newPeaks.size() 
+                  << "个新峰值，详细时间戳: ";
+        
+        for (const auto& peak : newPeaks) {
+            std::cout << peak.timestamp << "s(" << peak.frequency << "Hz) ";
+            
+            // 检查是否已存在相同时间戳和频率的峰值
+            bool isDuplicate = false;
+            for (const auto& existingPeak : peakCache_[channel]) {
+                if (std::abs(existingPeak.timestamp - peak.timestamp) < 0.001 && 
+                    existingPeak.frequency == peak.frequency) {
+                    isDuplicate = true;
+                    break;
+                }
+            }
+            
+            // 只有非重复的峰值才添加到缓存
+            if (!isDuplicate) {
+                uniquePeaks.push_back(peak);
+                std::cout << "✓ ";  // 标记成功添加
+            } else {
+                std::cout << "✗(重复) ";  // 标记重复未添加
+            }
+        }
+        std::cout << std::endl;
+
+
+        // uniquePeaks限制峰值缓存的数量，保留最强的峰值
+        if (uniquePeaks.size() > peakConfig.maxPeaksPerFrame) {
+            std::cout << "[DEBUG-峰值限制] 通道" << channel << "峰值总数超过限制，执行限制操作: " 
+                      << uniquePeaks.size() << " -> " << peakConfig.maxPeaksPerFrame << std::endl;
+            
+            // 创建临时容器保存峰值和幅度信息
+            std::vector<std::pair<size_t, float>> indexMagnitudePairs;
+            indexMagnitudePairs.reserve(uniquePeaks.size());
+
+            for (size_t i = 0; i < uniquePeaks.size(); ++i) {
+                indexMagnitudePairs.emplace_back(i, uniquePeaks[i].magnitude);
+            }   
+            
+            // 部分排序，找出幅度最大的maxPeaksPerFrame个峰值
+            std::partial_sort(
+                indexMagnitudePairs.begin(),
+                indexMagnitudePairs.begin() + std::min(peakConfig.maxPeaksPerFrame, indexMagnitudePairs.size()),
+                indexMagnitudePairs.end(),
+                [](const auto& a, const auto& b) { return a.second > b.second; }
+            );  
+
+            // 提取幅度最大的maxPeaksPerFrame个峰值的索引
+            std::vector<size_t> topIndices;
+            topIndices.reserve(peakConfig.maxPeaksPerFrame);
+            
+            for (size_t i = 0; i < std::min(peakConfig.maxPeaksPerFrame, indexMagnitudePairs.size()); ++i) {
+                topIndices.push_back(indexMagnitudePairs[i].first);
+            }   
+
+            // 按原始索引排序，保持时间顺序
+            std::sort(topIndices.begin(), topIndices.end());
+
+            // 创建新的峰值列表
+            std::vector<Peak> filteredPeaks;
+            filteredPeaks.reserve(topIndices.size());
+
+            for (size_t idx : topIndices) {
+                filteredPeaks.push_back(uniquePeaks[idx]);
+            }
+
+            // 用过滤后的峰值替换原始峰值缓存
+            uniquePeaks = std::move(filteredPeaks);
+
+            std::cout << "[DEBUG-峰值限制] 通道" << channel << "限制操作保留详细: ";
+            for (const auto& peak : uniquePeaks) {
+                std::cout << peak.timestamp << "s(" << peak.frequency << "Hz) ";
+            }
+            std::cout << std::endl;
+        }
+
+        peakCache_[channel].insert(peakCache_[channel].end(), uniquePeaks.begin(), uniquePeaks.end());
+
+        // 按时间戳排序峰值缓存
+        std::sort(peakCache_[channel].begin(), peakCache_[channel].end(), 
+                 [](const Peak& a, const Peak& b) { return a.timestamp < b.timestamp; });
+        
+    } else {
+        std::cout << "[DEBUG-峰值检测] 通道" << channel << "没有检测到新的峰值" << std::endl;
+    }
+    
+    // 更新窗口为下一个位置（滑动）
+    windowInfo.lastProcessedTime = windowEnd;
+    windowInfo.currentWindowStart = windowInfo.nextWindowStartTime;
+    windowInfo.currentWindowEnd = windowInfo.currentWindowStart + peakTimeDuration_;
+    windowInfo.nextWindowStartTime = windowInfo.currentWindowStart + peakTimeDuration_;
+    windowInfo.windowReady = false;
+    
+    // 记录确认的峰值窗口结束时间
+    confirmedPeakWindowEndMap_[channel] = windowEnd;
+    
+    std::cout << "[DEBUG-窗口] 通道" << channel << "峰值检测窗口滑动到" 
+              << windowInfo.currentWindowStart << "s-" << windowInfo.currentWindowEnd 
+              << "s" << std::endl;
+    
+    // 尝试生成长帧
+    tryGenerateLongFrames(channel);
+    
+    // 清理旧数据
+    // 保留结束时间减去峰值检测时间的两倍，确保有足够的重叠
+    double oldestTimeToKeep = windowInfo.currentWindowStart - peakTimeDuration_;
+    cleanupOldData(channel, oldestTimeToKeep);
+}
+
+// 尝试从峰值缓存中生成长帧
+void SignatureGenerator::tryGenerateLongFrames(uint32_t channel) {
+    // 检查是否有确认的峰值可用
+    if (peakCache_[channel].empty() || confirmedPeakWindowEndMap_.find(channel) == confirmedPeakWindowEndMap_.end()) {
+        return;
+    }
+    
+    // 获取长帧滑动窗口信息
+    if (longFrameWindowMap_.find(channel) == longFrameWindowMap_.end()) {
+        // 初始化长帧窗口
+        longFrameWindowMap_[channel] = SlidingWindowInfo();
+        longFrameWindowMap_[channel].currentWindowStart = peakCache_[channel].front().timestamp;
+        longFrameWindowMap_[channel].currentWindowEnd = longFrameWindowMap_[channel].currentWindowStart + frameDuration_;
+        longFrameWindowMap_[channel].nextWindowStartTime = longFrameWindowMap_[channel].currentWindowStart + frameDuration_;
+    }
+    
+    SlidingWindowInfo& longFrameWindow = longFrameWindowMap_[channel];
+    
+    // 确认的峰值窗口结束时间
+    double confirmedEndTime = confirmedPeakWindowEndMap_[channel];
+    
+    // 检查长帧窗口是否已经有足够的确认峰值
+    while (confirmedEndTime >= longFrameWindow.currentWindowEnd) {
+        // 可以处理长帧
+        processLongFrame(channel);
+        
+        // 滑动长帧窗口
+        longFrameWindow.lastProcessedTime = longFrameWindow.currentWindowEnd;
+        longFrameWindow.currentWindowStart = longFrameWindow.nextWindowStartTime;
+        longFrameWindow.currentWindowEnd = longFrameWindow.currentWindowStart + frameDuration_;
+        longFrameWindow.nextWindowStartTime = longFrameWindow.currentWindowStart + frameDuration_;
+        
+        std::cout << "[DEBUG-长帧] 通道" << channel << "长帧窗口滑动到" 
+                  << longFrameWindow.currentWindowStart << "s-" << longFrameWindow.currentWindowEnd 
+                  << "s" << std::endl;
+    }
+}
+
 } // namespace afp 
+
+

@@ -26,6 +26,7 @@ struct PeakDetectionConfig {
     float minPeakMagnitude;    // 最小峰值幅度阈值
     size_t minFreq;           // 最小频率 (Hz)
     size_t maxFreq;           // 最大频率 (Hz)
+    double peakTimeDuration;  // 峰值检测时间窗口 (秒)
 };
 
 // 指纹生成配置

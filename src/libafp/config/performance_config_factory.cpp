@@ -25,15 +25,16 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
     config->peakDetectionConfig_.localMaxRange = 4;        // 较小的本地最大值范围
-    config->peakDetectionConfig_.timeMaxRange = 2;         // 默认为1，只与相邻帧比较
-    config->peakDetectionConfig_.maxPeaksPerFrame = 5;     // 每帧最多7个峰值
-    config->peakDetectionConfig_.minPeakMagnitude = 0.3f;  // 较低的峰值幅度阈值
+    config->peakDetectionConfig_.timeMaxRange = 3;         // 默认为1，只与相邻帧比较
+    config->peakDetectionConfig_.maxPeaksPerFrame = 7;     // 每帧最多7个峰值
+    config->peakDetectionConfig_.minPeakMagnitude = 0.5f;  // 较低的峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 5000;           // 最大频率
+    config->peakDetectionConfig_.peakTimeDuration = 0.1;   // 移动端使用较小的峰值检测窗口
     
     // 指纹生成配置 - 针对三帧组合哈希优化
     config->signatureGenerationConfig_.minFreqDelta = 60;   // 最小频率差，增加区分度
-    config->signatureGenerationConfig_.maxFreqDelta = 500;  // 最大频率差，避免跨度太大
+    config->signatureGenerationConfig_.maxFreqDelta = 2000;  // 最大频率差，避免跨度太大
     config->signatureGenerationConfig_.maxTimeDelta = 0.2;  // 最大时间差限制为0.2秒，增强时间相关性
     config->signatureGenerationConfig_.frameDuration = 0.08; // 移动端使用较短的长帧时长，优化性能
     
@@ -61,6 +62,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createDesktopConfi
     config->peakDetectionConfig_.minPeakMagnitude = 0.05f; // 中等峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 5500;           // 最大频率
+    config->peakDetectionConfig_.peakTimeDuration = 0.25;  // PC端使用中等峰值检测窗口
     
     // 指纹生成配置 - PC端使用中等参数
     config->signatureGenerationConfig_.minFreqDelta = 70;   // 中等最小频率差，增强区分度
@@ -92,6 +94,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createServerConfig
     config->peakDetectionConfig_.minPeakMagnitude = 0.02f; // 较低的峰值幅度阈值
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 6000;           // 最大频率
+    config->peakDetectionConfig_.peakTimeDuration = 0.3;   // 服务器端使用较大的峰值检测窗口
     
     // 指纹生成配置 - 服务器端使用较严格的参数
     config->signatureGenerationConfig_.minFreqDelta = 80;   // 较大的最小频率差，更高的区分度
