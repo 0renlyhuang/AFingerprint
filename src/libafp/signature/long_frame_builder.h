@@ -1,8 +1,12 @@
 #pragma once
 
 #include "signature_generator.h"
+#include <iostream>
 #include <deque>
 #include <map>
+#include <vector>
+#include <memory>
+#include <sstream>
 
 namespace afp {
 

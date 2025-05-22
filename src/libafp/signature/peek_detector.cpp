@@ -124,7 +124,7 @@ void PeekDetector::detectPeaksInSlidingWindow(uint32_t channel, const std::vecto
                   << "个新峰值，详细时间戳: ";
         
         for (const auto& peak : newPeaks) {
-            std::cout << peak.timestamp << "s(" << peak.frequency << "Hz) ";
+            std::cout << peak.timestamp << "s(" << peak.frequency << "Hz," << peak.magnitude << ") ";
             
             // 检查是否已存在相同时间戳和频率的峰值
             bool isDuplicate = false;

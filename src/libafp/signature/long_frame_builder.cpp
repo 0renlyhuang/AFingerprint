@@ -184,12 +184,27 @@ bool LongFrameBuilder::processLongFrame(uint32_t channel, const std::vector<Peak
 // 移除长帧
 void LongFrameBuilder::removeConsumedLongFrame(uint32_t channel) {
     // 只保留最新的2帧
-    if (frameMap_.find(channel) != frameMap_.end() && frameMap_[channel].size() > 2) {
+    std::vector<double> removedTimestamps;
+    while (frameMap_.find(channel) != frameMap_.end() && frameMap_[channel].size() > 2) {
+        double removedTimestamp = frameMap_[channel].front().timestamp;
+        removedTimestamps.push_back(removedTimestamp);
         frameMap_[channel].pop_front();
     }
 
-    std::cout << "[DEBUG-长帧处理] LongFrameBuilder: 通道" << channel << "移除了长帧，当前长帧数量: " 
-              << frameMap_[channel].size() << std::endl;
+    if (!removedTimestamps.empty()) {
+        std::ostringstream timestampsStr;
+        for (size_t i = 0; i < removedTimestamps.size(); ++i) {
+            if (i > 0) timestampsStr << ", ";
+            timestampsStr << removedTimestamps[i] << "s";
+        }
+        
+        std::cout << "[DEBUG-长帧处理] LongFrameBuilder: 通道" << channel 
+                  << "移除了长帧，时间戳: [" << timestampsStr.str() 
+                  << "], 当前长帧数量: " << frameMap_[channel].size() << std::endl;
+    } else {
+        std::cout << "[DEBUG-长帧处理] LongFrameBuilder: 通道" << channel 
+                  << "没有移除长帧，当前长帧数量: " << frameMap_[channel].size() << std::endl;
+    }
 }
 
 // 滑动窗口

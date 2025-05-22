@@ -24,7 +24,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->fftConfig_.hopSize = 441;     // 0.1秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
-    config->peakDetectionConfig_.localMaxRange = 5;        // 较小的本地最大值范围
+    config->peakDetectionConfig_.localMaxRange = 30;        // 较小的本地最大值范围
     config->peakDetectionConfig_.timeMaxRange = 4;         // 默认为1，只与相邻帧比较
     config->peakDetectionConfig_.maxPeaksPerFrame = 7;     // 每帧最多7个峰值
     config->peakDetectionConfig_.minPeakMagnitude = 0.5f;  // 较低的峰值幅度阈值
@@ -35,7 +35,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     // 指纹生成配置 - 针对三帧组合哈希优化
     config->signatureGenerationConfig_.minFreqDelta = 60;   // 最小频率差，增加区分度
     config->signatureGenerationConfig_.maxFreqDelta = 3000;  // 最大频率差，避免跨度太大
-    config->signatureGenerationConfig_.maxTimeDelta = 0.2;  // 最大时间差限制为0.2秒，增强时间相关性
+    config->signatureGenerationConfig_.maxTimeDelta = 0.3;  // 最大时间差限制为0.2秒，增强时间相关性
     config->signatureGenerationConfig_.frameDuration = 0.08; // 移动端使用较短的长帧时长，优化性能
     
     // 匹配配置 - 移动端使用较严格的参数以减少内存使用
