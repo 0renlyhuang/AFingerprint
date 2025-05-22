@@ -12,6 +12,13 @@
 #include "audio/pcm_reader.h"
 #include "afp/isignature_generator.h"
 
+// 前向声明
+namespace afp {
+class PeekDetector;
+class LongFrameBuilder;
+class HashComputer;
+}
+
 namespace afp {
 
 // 星座图中的锚点和目标点
@@ -116,48 +123,9 @@ private:
     void processShortFrame(const float* frameBuffer, 
                           uint32_t channel,
                           double frameTimestamp);
-                          
-    // 从短帧FFT结果缓冲区中提取峰值 - 基于滑动窗口
-    std::vector<Peak> extractPeaksFromFFTResults(
-        const std::vector<FFTResult>& fftResults,
-        double windowStartTime,
-        double windowEndTime);
 
-    // 从多帧峰值生成指纹 - 基于三帧组合的方法
-    // 实现了基于频率差异、时间差异和幅度的过滤:
-    // 1. 根据配置的minFreqDelta和maxFreqDelta过滤频率差异太小或太大的对
-    // 2. 根据配置的maxTimeDelta过滤时间差异太大的对
-    // 3. 根据幅度阈值过滤幅度太小的峰值点
-    // 4. 确保不同帧之间的频率差异充分，避免生成冗余或相似的哈希值
-    std::vector<SignaturePoint> generateTripleFrameSignatures(
-        const std::deque<Frame>& frameHistory);
-    
-    // 计算三帧组合哈希值
-    // 增强的哈希计算方法，结合了以下特征:
-    // 1. 锚点峰值的频率作为基础特征
-    // 2. 峰值之间的频率差异
-    // 3. 峰值之间的时间差异
-    // 4. 峰值之间的相对幅度差异
-    // 通过结合这些特征，生成更具辨识度和稳定性的哈希值
-    uint32_t computeTripleFrameHash(
-        const Peak& anchorPeak,
-        const Peak& targetPeak1,
-        const Peak& targetPeak2);
-
-    // 处理长帧音频数据，基于滑动窗口
-    void processLongFrame(uint32_t channel);
-    
-    // 基于滑动窗口检测峰值
-    void detectPeaksInSlidingWindow(uint32_t channel);
-    
-    // 维护滑动窗口状态
-    bool updateSlidingWindows(uint32_t channel, double timestamp);
-    
-    // 尝试从峰值缓存中生成长帧
-    void tryGenerateLongFrames(uint32_t channel);
-    
-    // 清理过期的FFT和峰值数据
-    void cleanupOldData(uint32_t channel, double oldestTimeToKeep);
+    // 清理过期的FFT数据
+    void cleanupOldFFTData(uint32_t channel, int fftLastConsumedCount);
 
 private:
     static const size_t FRAME_BUFFER_SIZE = 3;  // 保存3帧用于生成指纹
@@ -182,29 +150,19 @@ private:
     std::vector<float> buffer_;
     std::vector<std::complex<float>> fftBuffer_;
     
-    // 存储每个通道的历史帧的缓冲区，用于跨3帧生成指纹
-    std::map<uint32_t, std::deque<Frame>> frameHistoryMap_;
-    
     // 每个通道的固定大小缓冲区，用于存储正好一帧长度的数据
     std::map<uint32_t, ChannelBuffer> channelBuffers_;
     
     // 每个通道的短帧FFT结果缓冲区
     std::map<uint32_t, std::vector<FFTResult>> fftResultsMap_;
     
-    // 每个通道的峰值缓存，存储通过峰值检测后的结果，用于积累长帧
-    std::map<uint32_t, std::vector<Peak>> peakCache_;
-    
-    // 每个通道的已确认时间窗口信息
-    std::map<uint32_t, SlidingWindowInfo> peakDetectionWindowMap_;
-    
-    // 每个通道的长帧滑动窗口信息
-    std::map<uint32_t, SlidingWindowInfo> longFrameWindowMap_;
-    
     // 记录每个通道最后处理的短帧时间戳
     std::map<uint32_t, double> lastProcessedShortFrameMap_;
     
-    // 记录每个通道的已确认峰值窗口结束时间
-    std::map<uint32_t, double> confirmedPeakWindowEndMap_;
+    // 逻辑处理类
+    std::unique_ptr<PeekDetector> peekDetector_;
+    std::unique_ptr<LongFrameBuilder> longFrameBuilder_;
+    std::unique_ptr<HashComputer> hashComputer_;
     
     // Visualization data
     bool collectVisualizationData_ = false;

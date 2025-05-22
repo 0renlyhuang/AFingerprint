@@ -9,99 +9,99 @@ namespace afp {
 
 void AudioDebugger::checkAudioBuffer(const float* buffer, size_t bufferSize, 
                                     double startTimestamp, bool isFirstCall) {
-    if (isFirstCall) {
-        std::cout << "首次处理音频数据: " << bufferSize << " 样本, 起始时间戳: " 
-                  << startTimestamp << std::endl;
-    }
+    // if (isFirstCall) {
+    //     std::cout << "首次处理音频数据: " << bufferSize << " 样本, 起始时间戳: " 
+    //               << startTimestamp << std::endl;
+    // }
 
-    // 检查原始输入数据是否含有非零值
-    bool hasNonZeroInput = false;
-    float maxInputValue = 0.0f;
-    size_t firstNonZeroPos = 0;
-    size_t lastNonZeroPos = 0;
+    // // 检查原始输入数据是否含有非零值
+    // bool hasNonZeroInput = false;
+    // float maxInputValue = 0.0f;
+    // size_t firstNonZeroPos = 0;
+    // size_t lastNonZeroPos = 0;
     
-    // 先检查前100个样本 
-    for (size_t i = 0; i < std::min(bufferSize, size_t(100)); ++i) {
-        if (std::abs(buffer[i]) > 0.0001f) {
-            hasNonZeroInput = true;
-            maxInputValue = std::max(maxInputValue, std::abs(buffer[i]));
-            if (firstNonZeroPos == 0) firstNonZeroPos = i;
-            lastNonZeroPos = i;
-        }
-    }
+    // // 先检查前100个样本 
+    // for (size_t i = 0; i < std::min(bufferSize, size_t(100)); ++i) {
+    //     if (std::abs(buffer[i]) > 0.0001f) {
+    //         hasNonZeroInput = true;
+    //         maxInputValue = std::max(maxInputValue, std::abs(buffer[i]));
+    //         if (firstNonZeroPos == 0) firstNonZeroPos = i;
+    //         lastNonZeroPos = i;
+    //     }
+    // }
     
-    std::cout << "[Debug] 输入音频前100样本检查: 含非零值: " << (hasNonZeroInput ? "是" : "否") 
-              << ", 前100个样本中最大值: " << maxInputValue << std::endl;
+    // std::cout << "[Debug] 输入音频前100样本检查: 含非零值: " << (hasNonZeroInput ? "是" : "否") 
+    //           << ", 前100个样本中最大值: " << maxInputValue << std::endl;
     
-    // 如果前100个样本都是0，检查整个缓冲区
-    if (!hasNonZeroInput) {
-        // 全面扫描整个缓冲区
-        std::cout << "[Debug] 扫描全部 " << bufferSize << " 个样本..." << std::endl;
+    // // 如果前100个样本都是0，检查整个缓冲区
+    // if (!hasNonZeroInput) {
+    //     // 全面扫描整个缓冲区
+    //     std::cout << "[Debug] 扫描全部 " << bufferSize << " 个样本..." << std::endl;
         
-        size_t nonZeroCount = 0;
+    //     size_t nonZeroCount = 0;
         
-        for (size_t i = 0; i < bufferSize; ++i) {
-            if (std::abs(buffer[i]) > 0.0001f) {
-                hasNonZeroInput = true;
-                nonZeroCount++;
-                maxInputValue = std::max(maxInputValue, std::abs(buffer[i]));
-                if (firstNonZeroPos == 0) firstNonZeroPos = i;
-                lastNonZeroPos = i;
+    //     for (size_t i = 0; i < bufferSize; ++i) {
+    //         if (std::abs(buffer[i]) > 0.0001f) {
+    //             hasNonZeroInput = true;
+    //             nonZeroCount++;
+    //             maxInputValue = std::max(maxInputValue, std::abs(buffer[i]));
+    //             if (firstNonZeroPos == 0) firstNonZeroPos = i;
+    //             lastNonZeroPos = i;
                 
-                // 找到第一个非零值后，输出一些样本
-                if (nonZeroCount == 1) {
-                    std::cout << "[Debug] 在位置 " << i << " 找到第一个非零值: " << buffer[i] << std::endl;
-                    std::cout << "[Debug] 样本值 " << i << " 到 " << i+9 << ": ";
-                    for (size_t j = i; j < std::min(i+10, bufferSize); ++j) {
-                        std::cout << buffer[j] << " ";
-                    }
-                    std::cout << std::endl;
-                }
-            }
-        }
+    //             // 找到第一个非零值后，输出一些样本
+    //             if (nonZeroCount == 1) {
+    //                 std::cout << "[Debug] 在位置 " << i << " 找到第一个非零值: " << buffer[i] << std::endl;
+    //                 std::cout << "[Debug] 样本值 " << i << " 到 " << i+9 << ": ";
+    //                 for (size_t j = i; j < std::min(i+10, bufferSize); ++j) {
+    //                     std::cout << buffer[j] << " ";
+    //                 }
+    //                 std::cout << std::endl;
+    //             }
+    //         }
+    //     }
         
-        std::cout << "[Debug] 全部样本扫描结果: 含非零值: " << (hasNonZeroInput ? "是" : "否") 
-                  << ", 非零值数量: " << nonZeroCount
-                  << ", 最大值: " << maxInputValue;
+    //     std::cout << "[Debug] 全部样本扫描结果: 含非零值: " << (hasNonZeroInput ? "是" : "否") 
+    //               << ", 非零值数量: " << nonZeroCount
+    //               << ", 最大值: " << maxInputValue;
         
-        if (hasNonZeroInput) {
-            std::cout << ", 首个非零值位置: " << firstNonZeroPos 
-                      << ", 最后非零值位置: " << lastNonZeroPos << std::endl;
-        } else {
-            std::cout << std::endl;
-        }
+    //     if (hasNonZeroInput) {
+    //         std::cout << ", 首个非零值位置: " << firstNonZeroPos 
+    //                   << ", 最后非零值位置: " << lastNonZeroPos << std::endl;
+    //     } else {
+    //         std::cout << std::endl;
+    //     }
         
-        // 检查PCM文件格式 - 按照不同解释方式尝试查看数据
-        std::cout << "[Debug] 尝试不同格式解释PCM数据:" << std::endl;
+        // // 检查PCM文件格式 - 按照不同解释方式尝试查看数据
+        // std::cout << "[Debug] 尝试不同格式解释PCM数据:" << std::endl;
         
-        // 尝试作为16位整数读取（常见PCM格式）
-        std::cout << "[Debug] 作为16位整数解释首10个样本: ";
-        for (size_t i = 0; i < std::min(bufferSize/2, size_t(10)); ++i) {
-            const int16_t* int16Ptr = reinterpret_cast<const int16_t*>(buffer) + i;
-            std::cout << *int16Ptr << " ";
-        }
-        std::cout << std::endl;
+        // // 尝试作为16位整数读取（常见PCM格式）
+        // std::cout << "[Debug] 作为16位整数解释首10个样本: ";
+        // for (size_t i = 0; i < std::min(bufferSize/2, size_t(10)); ++i) {
+        //     const int16_t* int16Ptr = reinterpret_cast<const int16_t*>(buffer) + i;
+        //     std::cout << *int16Ptr << " ";
+        // }
+        // std::cout << std::endl;
         
-        // 尝试作为32位整数读取
-        std::cout << "[Debug] 作为32位整数解释首10个样本: ";
-        for (size_t i = 0; i < std::min(bufferSize/4, size_t(10)); ++i) {
-            const int32_t* int32Ptr = reinterpret_cast<const int32_t*>(buffer) + i;
-            std::cout << *int32Ptr << " ";
-        }
-        std::cout << std::endl;
+        // // 尝试作为32位整数读取
+        // std::cout << "[Debug] 作为32位整数解释首10个样本: ";
+        // for (size_t i = 0; i < std::min(bufferSize/4, size_t(10)); ++i) {
+        //     const int32_t* int32Ptr = reinterpret_cast<const int32_t*>(buffer) + i;
+        //     std::cout << *int32Ptr << " ";
+        // }
+        // std::cout << std::endl;
         
-        // 尝试查看内存的前128字节（十六进制表示）
-        std::cout << "[Debug] 内存内容前128字节: " << std::endl;
-        const unsigned char* bytePtr = reinterpret_cast<const unsigned char*>(buffer);
-        for (size_t i = 0; i < std::min(bufferSize * sizeof(float), size_t(128)); ++i) {
-            std::cout << std::hex << std::setw(2) << std::setfill('0') 
-                      << static_cast<int>(bytePtr[i]) << " ";
-            if ((i + 1) % 16 == 0) std::cout << std::endl;
-        }
-        std::cout << std::dec << std::endl;
+        // // 尝试查看内存的前128字节（十六进制表示）
+        // std::cout << "[Debug] 内存内容前128字节: " << std::endl;
+        // const unsigned char* bytePtr = reinterpret_cast<const unsigned char*>(buffer);
+        // for (size_t i = 0; i < std::min(bufferSize * sizeof(float), size_t(128)); ++i) {
+        //     std::cout << std::hex << std::setw(2) << std::setfill('0') 
+        //               << static_cast<int>(bytePtr[i]) << " ";
+        //     if ((i + 1) % 16 == 0) std::cout << std::endl;
+        // }
+        // std::cout << std::dec << std::endl;
         
-        std::cout << "[警告] 输入音频数据全为零或格式不正确，请检查音频源或数据加载过程" << std::endl;
-    }
+        // std::cout << "[警告] 输入音频数据全为零或格式不正确，请检查音频源或数据加载过程" << std::endl;
+    // }
 }
 
 void AudioDebugger::checkSignatureInput(const float* buffer, size_t bufferSize, 
