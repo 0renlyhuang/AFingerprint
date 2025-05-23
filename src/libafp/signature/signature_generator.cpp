@@ -384,22 +384,15 @@ void SignatureGenerator::processShortFrame(const float* frameBuffer,
         // 计算复数的模
         float magnitude = std::abs(fftBuffer_[i]);
         
-        // 对数频谱
+        // 对数频谱，保持绝对值以确保不同短帧之间的可比性
         fftResult.magnitudes[i] = magnitude > 0.00001f ? 20.0f * std::log10(magnitude) + 100.0f : 0;
-        
-        // 更新最大值
-        if (fftResult.magnitudes[i] > maxMagnitude) {
-            maxMagnitude = fftResult.magnitudes[i];
-        }
         
         // 计算每个bin对应的频率
         fftResult.frequencies[i] = i * sampleRate_ / fftSize_;
     }
     
-    // 正规化幅度谱
-    for (size_t i = 0; i < fftSize_ / 2; ++i) {
-        fftResult.magnitudes[i] /= maxMagnitude;
-    }
+    // 不再进行正规化，保持对数幅度的绝对值，确保不同短帧之间的幅度具有可比性
+    // 这对于跨帧的峰值检测至关重要
     
     // 将FFT结果添加到通道的FFT结果缓冲区
     fftResultsMap_[channel].push_back(std::move(fftResult));
