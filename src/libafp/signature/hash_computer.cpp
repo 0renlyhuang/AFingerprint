@@ -209,31 +209,40 @@ uint32_t HashComputer::computeTripleFrameHash(
     uint32_t timeDelta1Unsigned = static_cast<uint32_t>(timeDelta1Constrained + 32) & 0x3F; // 6位
     uint32_t timeDelta2Unsigned = static_cast<uint32_t>(timeDelta2Constrained + 32) & 0x3F; // 6位
     
-    // 处理频率差，限制在10位表示范围内
-    uint32_t freqDelta1Mapped = static_cast<uint32_t>(std::abs(freqDelta1) & 0x1FF); // 9位幅度
-    uint32_t freqDelta2Mapped = static_cast<uint32_t>(std::abs(freqDelta2) & 0x1FF); // 9位幅度
+    // 处理频率差，除以2增加鲁棒性，然后限制在10位表示范围内
+    uint32_t freqDelta1Mapped = static_cast<uint32_t>(std::abs(freqDelta1 / 2) & 0x1FF); // 9位幅度
+    uint32_t freqDelta2Mapped = static_cast<uint32_t>(std::abs(freqDelta2 / 2) & 0x1FF); // 9位幅度
     
     // 保留符号位（第10位）
     if (freqDelta1 < 0) freqDelta1Mapped |= 0x200;
     if (freqDelta2 < 0) freqDelta2Mapped |= 0x200;
     
-    // 包含幅度信息 - 将三个峰值的相对幅度差作为哈希的一部分
-    // 这里我们只取几个bit来表示幅度差异，避免过度敏感
-    uint8_t ampFactor1 = static_cast<uint8_t>(std::min(3, static_cast<int>(anchorPeak.magnitude / std::max(0.001f, targetPeak1.magnitude))));
-    uint8_t ampFactor2 = static_cast<uint8_t>(std::min(3, static_cast<int>(anchorPeak.magnitude / std::max(0.001f, targetPeak2.magnitude))));
+    // 包含幅度信息 - 使用对数比例和分桶策略增强鲁棒性
+    // 计算对数幅度差，然后映射到更稳定的范围内
+    float logAmpDiff1 = std::log10(anchorPeak.magnitude + 0.01f) - std::log10(targetPeak1.magnitude + 0.01f);
+    float logAmpDiff2 = std::log10(anchorPeak.magnitude + 0.01f) - std::log10(targetPeak2.magnitude + 0.01f);
+    
+    // 将对数差异映射到0-7的范围，增加一位用于表示符号，提供更细致的幅度差异表示
+    // 使用较大的分桶(0.5)减少对微小幅度变化的敏感度
+    uint8_t ampFactor1 = static_cast<uint8_t>(std::min(7, static_cast<int>((std::abs(logAmpDiff1) * 2) + 0.5f)));
+    uint8_t ampFactor2 = static_cast<uint8_t>(std::min(7, static_cast<int>((std::abs(logAmpDiff2) * 2) + 0.5f)));
+    
+    // 加入符号位
+    if (logAmpDiff1 < 0) ampFactor1 |= 0x8;
+    if (logAmpDiff2 < 0) ampFactor2 |= 0x8;
     
     // 创建第一组异或组合（频率差1和时间差1），加入幅度因子
     // 使用异或运算结合频率、时间和幅度信息，增加区分度
     uint32_t combo1 = (freqDelta1Mapped & 0x3FF) ^ 
                      ((timeDelta1Unsigned & 0x03) << 8) ^ // 时间差低2位移到高位
                      ((timeDelta1Unsigned & 0x3C) << 2) ^ // 时间差高4位调整位置
-                     (ampFactor1 << 6);                   // 加入幅度因子
+                     ((ampFactor1 & 0xF) << 6);           // 加入4位幅度因子
     
     // 创建第二组异或组合（频率差2和时间差2），加入幅度因子
     uint32_t combo2 = (freqDelta2Mapped & 0x3FF) ^ 
                      ((timeDelta2Unsigned & 0x03) << 8) ^ // 时间差低2位移到高位
                      ((timeDelta2Unsigned & 0x3C) << 2) ^ // 时间差高4位调整位置
-                     (ampFactor2 << 6);                   // 加入幅度因子
+                     ((ampFactor2 & 0xF) << 6);           // 加入4位幅度因子
     
     // 确保组合结果不超过10位
     combo1 &= 0x3FF;
