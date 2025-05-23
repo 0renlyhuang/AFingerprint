@@ -148,37 +148,134 @@ function select_audio_file() {
     local default_file="$2"
     
     # If there's a default file from JSON, use it automatically without asking
-    if [ -n "$default_file" ]; then
-        echo "JSON 文件中包含音频路径, 使用: $(basename "$default_file")"
+    if [ -n "$default_file" ] && [ -f "$default_file" ]; then
+        echo "JSON 文件中包含音频路径, 使用: $(basename "$default_file")" >&2
         echo "$default_file"
-        return
+        return 0
     fi
     
     # Check if there are any audio files
     if [ -z "$AUDIO_FILES" ]; then
-        echo "No audio files found"
-        return
+        echo "No audio files found" >&2
+        echo ""
+        return 0
     fi
     
     # Create a menu of audio files
-    echo "$prompt"
-    echo "0) 不使用音频文件"
+    echo "$prompt" >&2
+    echo "0) 不使用音频文件" >&2
     
     local i=1
     local audio_file_array=()
     
     for file in $AUDIO_FILES; do
         audio_file_array+=("$file")
-        echo "$i) $(basename "$file")"
+        echo "$i) $(basename "$file")" >&2
         i=$((i+1))
     done
     
-    read -p "请选择一个音频文件 (0-$((i-1))): " audio_choice
+    echo -n "请选择一个音频文件 (0-$((i-1))): " >&2
+    read audio_choice
     
     # If valid choice, return the file path
     if [ "$audio_choice" -ge 1 ] && [ "$audio_choice" -le "$((i-1))" ]; then
-        echo "${audio_file_array[$((audio_choice-1))]}"
+        selected_file="${audio_file_array[$((audio_choice-1))]}"
+        echo "$selected_file"
     else
+        echo ""
+    fi
+}
+
+# Function to interactively select train source audio file
+function select_train_source_audio() {
+    local prompt="$1"
+    local default_file="$2"
+    
+    echo "" >&2
+    echo "=== 选择训练音频文件作为Source Audio ===" >&2
+    echo "" >&2
+    
+    # If there's a default file from JSON, offer choice
+    if [ -n "$default_file" ] && [ -f "$default_file" ]; then
+        echo "检测到JSON文件中包含音频路径: $(basename "$default_file")" >&2
+        echo "1) 使用JSON中的音频文件: $(basename "$default_file")" >&2
+        echo "2) 从train目录选择其他音频文件" >&2
+        echo "3) 不使用音频文件" >&2
+        echo "" >&2
+        echo -n "请选择 (1/2/3): " >&2
+        read use_default_choice
+        
+        if [ "$use_default_choice" == "1" ]; then
+            echo "使用JSON中的音频文件: $default_file" >&2
+            echo "$default_file"
+            return 0
+        elif [ "$use_default_choice" == "3" ]; then
+            echo "不使用音频文件" >&2
+            echo ""
+            return 0
+        fi
+        # 如果选择2，继续下面的train目录选择逻辑
+    fi
+    
+    # Check if train_pcm directory exists
+    if [ ! -d "train_pcm" ]; then
+        echo "错误: train_pcm 目录不存在" >&2
+        echo "当前工作目录: $(pwd)" >&2
+        echo "请确保在项目根目录下运行此脚本" >&2
+        echo ""
+        return 0
+    fi
+    
+    # Find all PCM files in train_pcm directory
+    TRAIN_AUDIO_FILES=$(find train_pcm -name "*.pcm" | sort)
+    
+    if [ -z "$TRAIN_AUDIO_FILES" ]; then
+        echo "错误: train_pcm 目录中没有找到 .pcm 文件" >&2
+        echo "目录内容:" >&2
+        ls -la train_pcm/ >&2 || echo "无法列出目录内容" >&2
+        echo ""
+        return 0
+    fi
+    
+    # Create a menu of train audio files
+    echo "" >&2
+    echo "$prompt" >&2
+    echo "可用的训练音频文件:" >&2
+    echo "0) 不使用音频文件" >&2
+    echo "" >&2
+    
+    local i=1
+    local train_audio_array=()
+    
+    for file in $TRAIN_AUDIO_FILES; do
+        train_audio_array+=("$file")
+        if [ -f "$file" ]; then
+            file_size=$(du -h "$file" | cut -f1)
+            echo "$i) $(basename "$file") ($file_size)" >&2
+        else
+            echo "$i) $(basename "$file") (文件不存在)" >&2
+        fi
+        i=$((i+1))
+    done
+    
+    echo "" >&2
+    echo "总共找到 $((i-1)) 个训练音频文件" >&2
+    echo "" >&2
+    
+    echo -n "请选择一个训练音频文件 (0-$((i-1))): " >&2
+    read train_audio_choice
+    
+    # Validate choice and return file path
+    if [ "$train_audio_choice" == "0" ]; then
+        echo "不使用音频文件" >&2
+        echo ""
+    elif [ "$train_audio_choice" -ge 1 ] && [ "$train_audio_choice" -le "$((i-1))" ]; then
+        selected_file="${train_audio_array[$((train_audio_choice-1))]}"
+        echo "选择的训练音频文件: $(basename "$selected_file")" >&2
+        echo "完整路径: $selected_file" >&2
+        echo "$selected_file"
+    else
+        echo "无效选择，不使用音频文件" >&2
         echo ""
     fi
 }
@@ -298,7 +395,7 @@ function launch_interactive_visualization() {
                     echo "- 音频文件: $([ -f "$json_audio_path" ] && echo "存在" || echo "不存在")"
                 else
                     # Prompt for audio file only if JSON doesn't have a path
-                    audio_file=$(select_audio_file "请为源文件选择一个音频文件:" "")
+                    audio_file=$(select_train_source_audio "请为源文件选择一个训练音频文件:" "$json_audio_path")
                     
                     # Run visualization
                     if [ -n "$audio_file" ]; then
@@ -452,21 +549,37 @@ function launch_interactive_visualization() {
                 echo "- 源文件: '$source_audio'"
                 echo "- 查询文件: '$query_audio'"
                 
-                if [ -n "$source_audio" ] || [ -n "$query_audio" ]; then
-                    echo "检测到JSON文件中已嵌入音频路径:"
-                    [ -n "$source_audio" ] && echo "- 源文件: $(basename "$source_audio")"
-                    [ -n "$query_audio" ] && echo "- 查询文件: $(basename "$query_audio")"
-                    echo "注意: 比较可视化暂不支持音频播放，但脚本会正确读取JSON中的音频路径用于单个文件的可视化"
-                fi
+                # 交互式选择音频文件
+                echo ""
+                echo "=== 比较可视化音频选择 ==="
                 
-                # Run visualization
+                # 选择源音频文件
+                selected_source_audio=$(select_train_source_audio "请选择源音频文件 (用于比较可视化):" "$source_audio")
+                echo ">>> 源音频选择结果: '$selected_source_audio'" >&2
+                
+                # 选择查询音频文件  
+                echo ""
+                selected_query_audio=$(select_audio_file "请选择查询音频文件 (用于比较可视化):" "$query_audio")
+                echo ">>> 查询音频选择结果: '$selected_query_audio'" >&2
+                
+                # Run visualization - 构建基础命令
                 if [ -n "$session_file" ]; then
-                    cmd="python3 $VISUALIZATION_SCRIPT --debug-comparison --source \"$source_file\" --query \"$query_file\" --sessions \"$session_file\""
+                    cmd="python3 $VISUALIZATION_SCRIPT --source \"$source_file\" --query \"$query_file\" --sessions \"$session_file\""
                 else
-                    cmd="python3 $VISUALIZATION_SCRIPT --debug-comparison --source \"$source_file\" --query \"$query_file\""
+                    cmd="python3 $VISUALIZATION_SCRIPT --source \"$source_file\" --query \"$query_file\""
                 fi
                 
-                echo "运行比较可视化命令: $cmd"
+                # 添加音频参数 - 只有在有有效路径时才添加
+                if [ -n "$selected_source_audio" ] && [ "$selected_source_audio" != "" ]; then
+                    cmd="$cmd --source-audio \"$selected_source_audio\""
+                    echo ">>> 添加源音频参数: $selected_source_audio" >&2
+                fi
+                if [ -n "$selected_query_audio" ] && [ "$selected_query_audio" != "" ]; then
+                    cmd="$cmd --query-audio \"$selected_query_audio\""
+                    echo ">>> 添加查询音频参数: $selected_query_audio" >&2
+                fi
+                
+                echo "运行: $cmd"
                 echo "检查文件是否存在:"
                 echo "- 可视化脚本: $([ -f "$VISUALIZATION_SCRIPT" ] && echo "存在" || echo "不存在")"
                 echo "- 源文件: $([ -f "$source_file" ] && echo "存在" || echo "不存在")"
@@ -633,7 +746,7 @@ function launch_audio_playback_visualization() {
                     echo "- 音频文件: $([ -f "$json_audio_path" ] && echo "存在" || echo "不存在")"
                 else
                     # Prompt for audio file only if JSON doesn't have a path
-                    audio_file=$(select_audio_file "请为源文件选择一个音频文件:" "")
+                    audio_file=$(select_train_source_audio "请为源文件选择一个训练音频文件:" "$json_audio_path")
                     
                     # Run visualization
                     if [ -n "$audio_file" ]; then
@@ -787,11 +900,34 @@ function launch_audio_playback_visualization() {
                 echo "- 源文件: '$source_audio'"
                 echo "- 查询文件: '$query_audio'"
                 
-                # Run visualization
+                # 交互式选择音频文件
+                echo ""
+                echo "=== 比较可视化音频选择 ==="
+                
+                # 选择源音频文件
+                selected_source_audio=$(select_train_source_audio "请选择源音频文件 (用于比较可视化):" "$source_audio")
+                echo ">>> 源音频选择结果: '$selected_source_audio'" >&2
+                
+                # 选择查询音频文件  
+                echo ""
+                selected_query_audio=$(select_audio_file "请选择查询音频文件 (用于比较可视化):" "$query_audio")
+                echo ">>> 查询音频选择结果: '$selected_query_audio'" >&2
+                
+                # Run visualization - 构建基础命令
                 if [ -n "$session_file" ]; then
-                    cmd="python3 $VISUALIZATION_SCRIPT --debug-comparison --source \"$source_file\" --query \"$query_file\" --sessions \"$session_file\""
+                    cmd="python3 $VISUALIZATION_SCRIPT --source \"$source_file\" --query \"$query_file\" --sessions \"$session_file\""
                 else
-                    cmd="python3 $VISUALIZATION_SCRIPT --debug-comparison --source \"$source_file\" --query \"$query_file\""
+                    cmd="python3 $VISUALIZATION_SCRIPT --source \"$source_file\" --query \"$query_file\""
+                fi
+                
+                # 添加音频参数 - 只有在有有效路径时才添加
+                if [ -n "$selected_source_audio" ] && [ "$selected_source_audio" != "" ]; then
+                    cmd="$cmd --source-audio \"$selected_source_audio\""
+                    echo ">>> 添加源音频参数: $selected_source_audio" >&2
+                fi
+                if [ -n "$selected_query_audio" ] && [ "$selected_query_audio" != "" ]; then
+                    cmd="$cmd --query-audio \"$selected_query_audio\""
+                    echo ">>> 添加查询音频参数: $selected_query_audio" >&2
                 fi
                 
                 echo "运行: $cmd"
