@@ -131,40 +131,40 @@ void AudioDebugger::checkSignatureInput(const float* buffer, size_t bufferSize,
 }
 
 void AudioDebugger::checkCopiedBuffer(const std::vector<float>& buffer, size_t offset, size_t maxSize) {
-    // 检查复制到buffer中的数据
-    bool hasNonZeroBuffer = false;
-    for (size_t i = 0; i < std::min(buffer.size(), size_t(100)); ++i) {
-        if (std::abs(buffer[i]) > 0.0001f) {
-            hasNonZeroBuffer = true;
-            break;
-        }
-    }
+    // // 检查复制到buffer中的数据
+    // bool hasNonZeroBuffer = false;
+    // for (size_t i = 0; i < std::min(buffer.size(), size_t(100)); ++i) {
+    //     if (std::abs(buffer[i]) > 0.0001f) {
+    //         hasNonZeroBuffer = true;
+    //         break;
+    //     }
+    // }
     
-    if (!hasNonZeroBuffer) {
-        std::cout << "[警告] 从偏移量 " << offset << " 复制到buffer_的数据全为零" << std::endl;
-        if (offset == 0) {
-            std::cout << "[Debug] buffer_前10个值: ";
-            for (size_t i = 0; i < std::min(maxSize, size_t(10)); ++i) {
-                std::cout << buffer[i] << " ";
-            }
-            std::cout << std::endl;
-        }
-    }
+    // if (!hasNonZeroBuffer) {
+    //     std::cout << "[警告] 从偏移量 " << offset << " 复制到buffer_的数据全为零" << std::endl;
+    //     if (offset == 0) {
+    //         std::cout << "[Debug] buffer_前10个值: ";
+    //         for (size_t i = 0; i < std::min(maxSize, size_t(10)); ++i) {
+    //             std::cout << buffer[i] << " ";
+    //         }
+    //         std::cout << std::endl;
+    //     }
+    // }
 }
 
 void AudioDebugger::checkPreEmphasisBuffer(const std::vector<float>& buffer, size_t offset, size_t maxSize) {
-    // 检查预加重后的数据
-    bool hasNonZeroBuffer = false;
-    for (size_t i = 0; i < std::min(buffer.size(), size_t(100)); ++i) {
-        if (std::abs(buffer[i]) > 0.0001f) {
-            hasNonZeroBuffer = true;
-            break;
-        }
-    }
+    // // 检查预加重后的数据
+    // bool hasNonZeroBuffer = false;
+    // for (size_t i = 0; i < std::min(buffer.size(), size_t(100)); ++i) {
+    //     if (std::abs(buffer[i]) > 0.0001f) {
+    //         hasNonZeroBuffer = true;
+    //         break;
+    //     }
+    // }
     
-    if (!hasNonZeroBuffer && offset == 0) {
-        std::cout << "[警告] 预加重后buffer_中的数据仍为零" << std::endl;
-    }
+    // if (!hasNonZeroBuffer && offset == 0) {
+    //     std::cout << "[警告] 预加重后buffer_中的数据仍为零" << std::endl;
+    // }
 }
 
 void AudioDebugger::checkFftResults(const std::vector<std::complex<float>>& fftBuffer, 

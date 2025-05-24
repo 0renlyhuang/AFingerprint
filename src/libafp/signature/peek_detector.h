@@ -47,6 +47,8 @@ private:
         double windowStartTime, 
         double windowEndTime);
 
+    void filterPeaks(std::vector<Peak>& peaks, int maxPeaksPerFrame, uint32_t channel, const PeakDetectionConfig& peakConfig);
+
 private:
     std::shared_ptr<IPerformanceConfig> config_;
     std::map<uint32_t, std::vector<Peak>> peakCache_;

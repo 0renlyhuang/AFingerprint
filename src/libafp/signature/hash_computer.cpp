@@ -81,7 +81,7 @@ HashComputer::ComputeHashReturn HashComputer::computeHash(
                 totalPossibleCombinations += frame3.peaks.size();
                 
                 // 计算第一个频率差并检查是否在有效范围内
-                int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency - targetPeak1.frequency);
+                int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak1.frequency);
                 if (std::abs(freqDelta1) < signatureConfig.minFreqDelta) {
                     filteredByFreqDelta1_min += frame3.peaks.size();
                     continue; // 跳过频率差太小
@@ -100,7 +100,7 @@ HashComputer::ComputeHashReturn HashComputer::computeHash(
 
                 for (const auto& targetPeak2 : frame3.peaks) {
                     // 计算第二个频率差并检查是否在有效范围内
-                    int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency - anchorPeak.frequency);
+                    int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency) - static_cast<int32_t>(anchorPeak.frequency);
                     if (std::abs(freqDelta2) < signatureConfig.minFreqDelta || 
                         std::abs(freqDelta2) > signatureConfig.maxFreqDelta) {
                         filteredByFreqDelta2++;
@@ -182,13 +182,81 @@ HashComputer::ComputeHashReturn HashComputer::computeHash(
     return result;
 }
 
+uint32_t xor_high7bits_of_low11(uint32_t value, uint32_t xorBits) {
+    // 限制 xorBits 为7位
+    xorBits &= 0x7F;  // 0b0111'1111
+
+    // 提取低 11 位
+    uint32_t low11 = value & 0x7FF;
+
+    // 提取高 7 位（bits 10~4）
+    uint32_t high7 = (low11 >> 4) & 0x7F;
+
+    // 异或处理
+    high7 ^= xorBits;
+
+    // 保留低 4 位（bits 3~0）
+    uint32_t low4 = low11 & 0xF;
+
+    // 合并新 11 位结果
+    uint32_t newLow11 = (high7 << 4) | low4;
+
+    // 替换原值的低 11 位，返回新结果
+    return (value & ~0x7FF) | newLow11;
+}
+
 // 计算三帧组合哈希值
 uint32_t HashComputer::computeTripleFrameHash(
     const Peak& anchorPeak,
     const Peak& targetPeak1,
     const Peak& targetPeak2) {
     
-    // 计算频率差
+    // // 锚点频率近似（除以4进行量化，减少噪声敏感度）
+    // uint32_t anchorPeakFreqApprox = anchorPeak.frequency / 4;
+    // // 限制为10位 (最大值1023，对应4092Hz，足够覆盖3500Hz)
+    // anchorPeakFreqApprox &= 0x3FF;
+
+    // // 计算频率差（修正方向性）
+    // int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak1.frequency);
+    // int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency) - static_cast<int32_t>(anchorPeak.frequency);
+    
+    // // 频率差量化和范围限制（4Hz量化，10位表示范围）
+    // uint32_t freqDelta1Merge = static_cast<uint32_t>(std::abs(freqDelta1) / 4);
+    // uint32_t freqDelta2Merge = static_cast<uint32_t>(std::abs(freqDelta2) / 4);
+    
+    // // 限制频率差为10位幅度
+    // freqDelta1Merge = std::min(freqDelta1Merge, 0x3FFU);  // 最大1023
+    // freqDelta2Merge = std::min(freqDelta2Merge, 0x3FFU);  // 最大1023
+    
+    // // 添加符号位（第10位，索引10）
+    // if (freqDelta1 < 0) freqDelta1Merge |= 0x400;  // 第10位为符号位
+    // if (freqDelta2 < 0) freqDelta2Merge |= 0x400;  // 第10位为符号位
+    
+    // // 计算时间差（毫秒），确保符号正确
+    // double timeDiff1 = anchorPeak.timestamp - targetPeak1.timestamp;
+    // double timeDiff2 = targetPeak2.timestamp - anchorPeak.timestamp;
+    
+    // // 转换为毫秒并量化（2ms量化），限制范围为0-127
+    // uint32_t timeDelta1Merge = static_cast<uint32_t>(std::max(0.0, std::min(254.0, std::abs(timeDiff1 * 1000))) / 2);
+    // uint32_t timeDelta2Merge = static_cast<uint32_t>(std::max(0.0, std::min(254.0, std::abs(timeDiff2 * 1000))) / 2);
+    
+    // // 限制时间差为7位（0-127）
+    // timeDelta1Merge &= 0x7F;
+    // timeDelta2Merge &= 0x7F;
+    
+    // // 创建combo1和combo2（各11位）
+    // uint32_t combo1 = xor_high7bits_of_low11(freqDelta1Merge, timeDelta1Merge) & 0x7FF;
+    // uint32_t combo2 = xor_high7bits_of_low11(freqDelta2Merge, timeDelta2Merge) & 0x7FF;
+    
+    // // 最终的哈希组合 - 32位布局：
+    // // [31:22] 锚点频率 (10位)        - 位置22-31
+    // // [21:11] combo1 (11位)         - 位置11-21  
+    // // [10:0]  combo2 (11位)         - 位置0-10
+    // uint32_t hash = (anchorPeakFreqApprox << 22) |  // 锚点频率 (10位)
+    //                (combo1 << 11) |                 // combo1 (11位)
+    //                combo2;                          // combo2 (11位)
+
+        // 计算频率差
     int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency - targetPeak1.frequency);
     int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency - anchorPeak.frequency);
     
@@ -217,32 +285,18 @@ uint32_t HashComputer::computeTripleFrameHash(
     if (freqDelta1 < 0) freqDelta1Mapped |= 0x200;
     if (freqDelta2 < 0) freqDelta2Mapped |= 0x200;
     
-    // 包含幅度信息 - 使用对数比例和分桶策略增强鲁棒性
-    // 计算对数幅度差，然后映射到更稳定的范围内
-    float logAmpDiff1 = std::log10(anchorPeak.magnitude + 0.01f) - std::log10(targetPeak1.magnitude + 0.01f);
-    float logAmpDiff2 = std::log10(anchorPeak.magnitude + 0.01f) - std::log10(targetPeak2.magnitude + 0.01f);
-    
-    // 将对数差异映射到0-7的范围，增加一位用于表示符号，提供更细致的幅度差异表示
-    // 使用较大的分桶(0.5)减少对微小幅度变化的敏感度
-    uint8_t ampFactor1 = static_cast<uint8_t>(std::min(7, static_cast<int>((std::abs(logAmpDiff1) * 2) + 0.5f)));
-    uint8_t ampFactor2 = static_cast<uint8_t>(std::min(7, static_cast<int>((std::abs(logAmpDiff2) * 2) + 0.5f)));
-    
-    // 加入符号位
-    if (logAmpDiff1 < 0) ampFactor1 |= 0x8;
-    if (logAmpDiff2 < 0) ampFactor2 |= 0x8;
-    
+
     // 创建第一组异或组合（频率差1和时间差1），加入幅度因子
     // 使用异或运算结合频率、时间和幅度信息，增加区分度
     uint32_t combo1 = (freqDelta1Mapped & 0x3FF) ^ 
                      ((timeDelta1Unsigned & 0x03) << 8) ^ // 时间差低2位移到高位
-                     ((timeDelta1Unsigned & 0x3C) << 2) ^ // 时间差高4位调整位置
-                     ((ampFactor1 & 0xF) << 6);           // 加入4位幅度因子
+                     ((timeDelta1Unsigned & 0x3C) << 2); // 时间差高4位调整位置
+
     
     // 创建第二组异或组合（频率差2和时间差2），加入幅度因子
     uint32_t combo2 = (freqDelta2Mapped & 0x3FF) ^ 
                      ((timeDelta2Unsigned & 0x03) << 8) ^ // 时间差低2位移到高位
-                     ((timeDelta2Unsigned & 0x3C) << 2) ^ // 时间差高4位调整位置
-                     ((ampFactor2 & 0xF) << 6);           // 加入4位幅度因子
+                     ((timeDelta2Unsigned & 0x3C) << 2); // 时间差高4位调整位置
     
     // 确保组合结果不超过10位
     combo1 &= 0x3FF;
@@ -252,6 +306,7 @@ uint32_t HashComputer::computeTripleFrameHash(
     uint32_t hash = ((anchorPeak.frequency & 0xFFF) << 20) | // 锚点频率 (12位) - 位置20-31
                    (combo1 << 10) |                         // 第一组组合 (10位) - 位置10-19
                    combo2;                                  // 第二组组合 (10位) - 位置0-9
+
     
     return hash;
 }

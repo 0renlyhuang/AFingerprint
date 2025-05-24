@@ -117,85 +117,19 @@ void PeekDetector::detectPeaksInSlidingWindow(uint32_t channel, const std::vecto
     // 检测峰值
     std::vector<Peak> newPeaks = extractPeaksFromFFTResults(fftResults, wndStartIdx, wndEndIdx, windowStartTime, windowEndTime);
     
-    std::vector<Peak> uniquePeaks;
     if (!newPeaks.empty()) {
         // 详细输出每个即将添加的峰值
         std::cout << "[DEBUG-峰值添加] PeekDetector: 通道" << channel << "检测到" << newPeaks.size() 
-                  << "个新峰值，详细时间戳: ";
+                    << "个新峰值，详细时间戳: ";
         
         for (const auto& peak : newPeaks) {
             std::cout << peak.timestamp << "s(" << peak.frequency << "Hz," << peak.magnitude << ") ";
-            
-            // 检查是否已存在相同时间戳和频率的峰值
-            bool isDuplicate = false;
-            if (peakCache_.find(channel) != peakCache_.end()) {
-                for (const auto& existingPeak : peakCache_[channel]) {
-                    if (std::abs(existingPeak.timestamp - peak.timestamp) < 0.001 && 
-                        existingPeak.frequency == peak.frequency) {
-                        isDuplicate = true;
-                        break;
-                    }
-                }
-            }
-            
-            // 只有非重复的峰值才添加到缓存
-            if (!isDuplicate) {
-                uniquePeaks.push_back(peak);
-                std::cout << "✓ ";  // 标记成功添加
-            } else {
-                std::cout << "✗(重复) ";  // 标记重复未添加
-            }
         }
         std::cout << std::endl;
 
         // uniquePeaks限制峰值缓存的数量，保留最强的峰值
-        if (uniquePeaks.size() > peakConfig.maxPeaksPerFrame) {
-            std::cout << "[DEBUG-峰值限制] PeekDetector: 通道" << channel << "峰值总数超过限制，执行限制操作: " 
-                      << uniquePeaks.size() << " -> " << peakConfig.maxPeaksPerFrame << std::endl;
-            
-            // 创建临时容器保存峰值和幅度信息
-            std::vector<std::pair<size_t, float>> indexMagnitudePairs;
-            indexMagnitudePairs.reserve(uniquePeaks.size());
-
-            for (size_t i = 0; i < uniquePeaks.size(); ++i) {
-                indexMagnitudePairs.emplace_back(i, uniquePeaks[i].magnitude);
-            }   
-            
-            // 部分排序，找出幅度最大的maxPeaksPerFrame个峰值
-            std::partial_sort(
-                indexMagnitudePairs.begin(),
-                indexMagnitudePairs.begin() + std::min(peakConfig.maxPeaksPerFrame, indexMagnitudePairs.size()),
-                indexMagnitudePairs.end(),
-                [](const auto& a, const auto& b) { return a.second > b.second; }
-            );  
-
-            // 提取幅度最大的maxPeaksPerFrame个峰值的索引
-            std::vector<size_t> topIndices;
-            topIndices.reserve(peakConfig.maxPeaksPerFrame);
-            
-            for (size_t i = 0; i < std::min(peakConfig.maxPeaksPerFrame, indexMagnitudePairs.size()); ++i) {
-                topIndices.push_back(indexMagnitudePairs[i].first);
-            }   
-
-            // 按原始索引排序，保持时间顺序
-            std::sort(topIndices.begin(), topIndices.end());
-
-            // 创建新的峰值列表
-            std::vector<Peak> filteredPeaks;
-            filteredPeaks.reserve(topIndices.size());
-
-            for (size_t idx : topIndices) {
-                filteredPeaks.push_back(uniquePeaks[idx]);
-            }
-
-            // 用过滤后的峰值替换原始峰值缓存
-            uniquePeaks = std::move(filteredPeaks);
-
-            std::cout << "[DEBUG-峰值限制] PeekDetector: 通道" << channel << "限制操作保留详细: ";
-            for (const auto& peak : uniquePeaks) {
-                std::cout << peak.timestamp << "s(" << peak.frequency << "Hz) ";
-            }
-            std::cout << std::endl;
+        if (newPeaks.size() > peakConfig.maxPeaksPerFrame) {
+            this->filterPeaks(newPeaks, peakConfig.maxPeaksPerFrame, channel, peakConfig);
         }
 
         // 确保通道有峰值缓存
@@ -203,7 +137,7 @@ void PeekDetector::detectPeaksInSlidingWindow(uint32_t channel, const std::vecto
             peakCache_[channel] = std::vector<Peak>();
         }
 
-        peakCache_[channel].insert(peakCache_[channel].end(), uniquePeaks.begin(), uniquePeaks.end());
+        peakCache_[channel].insert(peakCache_[channel].end(), newPeaks.begin(), newPeaks.end());
 
         // 按时间戳排序峰值缓存
         std::sort(peakCache_[channel].begin(), peakCache_[channel].end(), 
@@ -212,6 +146,146 @@ void PeekDetector::detectPeaksInSlidingWindow(uint32_t channel, const std::vecto
     } else {
         std::cout << "[DEBUG-峰值检测] PeekDetector: 通道" << channel << "没有检测到新的峰值" << std::endl;
     }
+}
+
+void PeekDetector::filterPeaks(std::vector<Peak>& newPeaks, int maxPeaksPerFrame, uint32_t channel, const PeakDetectionConfig& peakConfig) {
+    std::cout << "[DEBUG-峰值限制] PeekDetector: 通道" << channel << "峰值总数超过限制，执行频段分配策略: " 
+              << newPeaks.size() << " -> " << peakConfig.maxPeaksPerFrame << std::endl;
+    
+    // 将频率范围分为4个频段
+    const float freqRange = static_cast<float>(peakConfig.maxFreq - peakConfig.minFreq);
+    const float bandWidth = freqRange / 4.0f;
+    
+    // 定义4个频段的边界
+    std::vector<std::pair<float, float>> frequencyBands = {
+        {static_cast<float>(peakConfig.minFreq), static_cast<float>(peakConfig.minFreq) + bandWidth},
+        {static_cast<float>(peakConfig.minFreq) + bandWidth, static_cast<float>(peakConfig.minFreq) + 2 * bandWidth},
+        {static_cast<float>(peakConfig.minFreq) + 2 * bandWidth, static_cast<float>(peakConfig.minFreq) + 3 * bandWidth},
+        {static_cast<float>(peakConfig.minFreq) + 3 * bandWidth, static_cast<float>(peakConfig.maxFreq)}
+    };
+    
+    std::cout << "[DEBUG-频段分配] PeekDetector: 通道" << channel << "频段划分: ";
+    for (size_t i = 0; i < frequencyBands.size(); ++i) {
+        std::cout << "频段" << i+1 << "[" << frequencyBands[i].first << "-" << frequencyBands[i].second << "Hz] ";
+    }
+    std::cout << std::endl;
+    
+    // 将峰值按频段分组
+    std::vector<std::vector<Peak>> bandPeaks(4);
+    for (const auto& peak : newPeaks) {
+        for (size_t i = 0; i < frequencyBands.size(); ++i) {
+            if (peak.frequency >= frequencyBands[i].first && peak.frequency < frequencyBands[i].second) {
+                bandPeaks[i].push_back(peak);
+                break;
+            }
+        }
+    }
+    
+    // 统计每个频段的峰值数量
+    std::cout << "[DEBUG-频段统计] PeekDetector: 通道" << channel << "各频段峰值数量: ";
+    for (size_t i = 0; i < bandPeaks.size(); ++i) {
+        std::cout << "频段" << i+1 << ":" << bandPeaks[i].size() << " ";
+    }
+    std::cout << std::endl;
+    
+    // 初始分配：每个频段平均分配峰值配额
+    const int baseQuotaPerBand = peakConfig.maxPeaksPerFrame / 4;
+    std::vector<int> bandQuotas(4, baseQuotaPerBand);
+    int remainingQuota = peakConfig.maxPeaksPerFrame - (baseQuotaPerBand * 4);
+    
+    // 优化分配策略：
+    // 1. 处理空频段和峰值不足的频段，将多余配额收回
+    // 2. 将收回的配额重新分配给有更多峰值的频段
+    
+    // 第一轮：收集各种类型的频段
+    std::vector<int> insufficientBands;   // 峰值数量少于配额的频段（包括空频段）
+    std::vector<int> needMoreBands;       // 峰值数量超过配额的频段
+    
+    for (size_t i = 0; i < bandPeaks.size(); ++i) {
+        int peakCount = static_cast<int>(bandPeaks[i].size());
+        if (peakCount < bandQuotas[i]) {
+            insufficientBands.push_back(i);
+        } else if (peakCount > bandQuotas[i]) {
+            needMoreBands.push_back(i);
+        }
+    }
+    
+    // 第二轮：从峰值不足的频段收回多余配额
+    for (int band : insufficientBands) {
+        int actualPeaks = static_cast<int>(bandPeaks[band].size());
+        int excessQuota = bandQuotas[band] - actualPeaks;
+        remainingQuota += excessQuota;
+        bandQuotas[band] = actualPeaks;  // 设置为实际峰值数量
+    }
+    
+    // 第三轮：将剩余配额分配给需要更多峰值的频段
+    while (remainingQuota > 0 && !needMoreBands.empty()) {
+        bool allocated = false;
+        for (int band : needMoreBands) {
+            if (remainingQuota <= 0) break;
+            if (bandQuotas[band] < static_cast<int>(bandPeaks[band].size())) {
+                bandQuotas[band]++;
+                remainingQuota--;
+                allocated = true;
+            }
+        }
+        
+        // 如果这一轮没有分配任何配额，说明所有频段都已满足，退出循环
+        if (!allocated) break;
+        
+        // 移除已满足的频段
+        needMoreBands.erase(
+            std::remove_if(needMoreBands.begin(), needMoreBands.end(),
+                [&](int band) { return bandQuotas[band] >= static_cast<int>(bandPeaks[band].size()); }),
+            needMoreBands.end()
+        );
+    }
+    
+    std::cout << "[DEBUG-配额分配] PeekDetector: 通道" << channel << "最终配额分配: ";
+    int totalQuota = 0;
+    for (size_t i = 0; i < bandQuotas.size(); ++i) {
+        std::cout << "频段" << i+1 << ":" << bandQuotas[i] << " ";
+        totalQuota += bandQuotas[i];
+    }
+    std::cout << "(总配额:" << totalQuota << ")" << std::endl;
+    
+    // 在每个频段内按幅度排序并选择顶部峰值
+    std::vector<Peak> filteredPeaks;
+    int totalSelectedPeaks = 0;
+    
+    for (size_t i = 0; i < bandPeaks.size(); ++i) {
+        if (bandQuotas[i] == 0 || bandPeaks[i].empty()) {
+            continue;
+        }
+        
+        // 对当前频段的峰值按幅度降序排序
+        std::sort(bandPeaks[i].begin(), bandPeaks[i].end(),
+            [](const Peak& a, const Peak& b) { return a.magnitude > b.magnitude; });
+        
+        // 选择该频段的顶部峰值
+        int peaksToSelect = std::min(bandQuotas[i], static_cast<int>(bandPeaks[i].size()));
+        for (int j = 0; j < peaksToSelect; ++j) {
+            filteredPeaks.push_back(bandPeaks[i][j]);
+            totalSelectedPeaks++;
+        }
+        
+        std::cout << "[DEBUG-频段选择] PeekDetector: 通道" << channel << "频段" << i+1 
+                  << "选择了" << peaksToSelect << "个峰值" << std::endl;
+    }
+    
+    // 按时间戳排序保持时间顺序
+    std::sort(filteredPeaks.begin(), filteredPeaks.end(),
+        [](const Peak& a, const Peak& b) { return a.timestamp < b.timestamp; });
+    
+    // 用过滤后的峰值替换原始峰值
+    newPeaks = std::move(filteredPeaks);
+    
+    std::cout << "[DEBUG-峰值限制] PeekDetector: 通道" << channel << "频段分配完成，最终保留" 
+              << totalSelectedPeaks << "个峰值，详细: ";
+    for (const auto& peak : newPeaks) {
+        std::cout << peak.timestamp << "s(" << peak.frequency << "Hz," << peak.magnitude << ") ";
+    }
+    std::cout << std::endl;
 }
 
 // 从短帧FFT结果缓冲区中提取峰值

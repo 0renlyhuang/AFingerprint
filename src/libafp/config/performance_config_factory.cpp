@@ -24,12 +24,12 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->fftConfig_.hopSize = 441;     // 0.1秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
-    config->peakDetectionConfig_.localMaxRange = 30;        // 较小的本地最大值范围
+    config->peakDetectionConfig_.localMaxRange = 10;        // 较小的本地最大值范围
     config->peakDetectionConfig_.timeMaxRange = 4;         // 默认为1，只与相邻帧比较
-    config->peakDetectionConfig_.maxPeaksPerFrame = 7;     // 每帧最多7个峰值
-    config->peakDetectionConfig_.minPeakMagnitude = 0.5f;  // 较低的峰值幅度阈值
-    config->peakDetectionConfig_.minFreq = 250;            // 最小频率
-    config->peakDetectionConfig_.maxFreq = 5000;           // 最大频率
+    config->peakDetectionConfig_.maxPeaksPerFrame = 8;     // 每帧最多7个峰值
+    config->peakDetectionConfig_.minPeakMagnitude = 25.0f;  // 提高阈值到45dB，有效过滤噪声
+    config->peakDetectionConfig_.minFreq = 300;            // 最小频率
+    config->peakDetectionConfig_.maxFreq = 7000;           // 最大频率
     config->peakDetectionConfig_.peakTimeDuration = 0.1;   // 移动端使用较小的峰值检测窗口
     
     // 指纹生成配置 - 针对三帧组合哈希优化
@@ -59,7 +59,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createDesktopConfi
     config->peakDetectionConfig_.localMaxRange = 3;        // 中等本地最大值范围
     config->peakDetectionConfig_.timeMaxRange = 2;         // 中等时间维度最大值范围，前后2帧
     config->peakDetectionConfig_.maxPeaksPerFrame = 10;    // 每帧保留中等数量的峰值
-    config->peakDetectionConfig_.minPeakMagnitude = 0.05f; // 中等峰值幅度阈值
+    config->peakDetectionConfig_.minPeakMagnitude = 40.0f; // 提高阈值到40dB，平衡敏感度和抗噪性
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 5500;           // 最大频率
     config->peakDetectionConfig_.peakTimeDuration = 0.25;  // PC端使用中等峰值检测窗口
@@ -91,7 +91,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createServerConfig
     config->peakDetectionConfig_.localMaxRange = 4;        // 较大的本地最大值范围
     config->peakDetectionConfig_.timeMaxRange = 3;         // 较大的时间维度最大值范围，前后3帧
     config->peakDetectionConfig_.maxPeaksPerFrame = 15;    // 每帧保留较多的峰值
-    config->peakDetectionConfig_.minPeakMagnitude = 0.02f; // 较低的峰值幅度阈值
+    config->peakDetectionConfig_.minPeakMagnitude = 35.0f; // 设置为35dB，服务器端更敏感以捕获更多细节
     config->peakDetectionConfig_.minFreq = 250;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 6000;           // 最大频率
     config->peakDetectionConfig_.peakTimeDuration = 0.3;   // 服务器端使用较大的峰值检测窗口
