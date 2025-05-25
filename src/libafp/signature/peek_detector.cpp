@@ -304,12 +304,54 @@ std::vector<Peak> PeekDetector::extractPeaksFromFFTResults(
     // 创建一个候选峰值列表
     std::vector<Peak> candidatePeaks;
     
+    // 计算当前窗口中所有magnitude的分位数作为动态阈值
+    std::vector<float> allMagnitudes;
+    const auto startIdx = std::max(wndStartIdx, static_cast<int>(peakConfig.timeMaxRange));
+    
+    // 收集窗口内所有帧的幅度值
+    for (size_t frameIdx = startIdx; frameIdx < wndEndIdx; ++frameIdx) {
+        const auto& currentFrame = fftResults[frameIdx];
+        for (size_t freqIdx = peakConfig.localMaxRange; 
+             freqIdx < fftSize / 2 - peakConfig.localMaxRange; 
+             ++freqIdx) {
+            // 只收集在有效频率范围内的幅度值
+            if (currentFrame.frequencies[freqIdx] >= peakConfig.minFreq && 
+                currentFrame.frequencies[freqIdx] <= peakConfig.maxFreq) {
+                allMagnitudes.push_back(currentFrame.magnitudes[freqIdx]);
+            }
+        }
+    }
+    
+    // 计算配置的分位数
+    float quantileMagnitude = 0.0f;
+    if (!allMagnitudes.empty()) {
+        std::sort(allMagnitudes.begin(), allMagnitudes.end());
+        size_t n = allMagnitudes.size();
+        
+        // 计算分位数位置
+        float position = peakConfig.quantileThreshold * (n - 1);
+        size_t lowerIndex = static_cast<size_t>(std::floor(position));
+        size_t upperIndex = static_cast<size_t>(std::ceil(position));
+        
+        if (lowerIndex == upperIndex) {
+            quantileMagnitude = allMagnitudes[lowerIndex];
+        } else {
+            // 线性插值计算分位数
+            float weight = position - lowerIndex;
+            quantileMagnitude = allMagnitudes[lowerIndex] * (1.0f - weight) + 
+                               allMagnitudes[upperIndex] * weight;
+        }
+    }
+    
+    std::cout << "[DEBUG-分位数] PeekDetector: 窗口内幅度" << (peakConfig.quantileThreshold * 100) 
+              << "分位数: " << quantileMagnitude 
+              << ", 最小峰值幅度阈值: " << peakConfig.minPeakMagnitude << std::endl;
+    
     // 在时频域上查找局部最大值
     // 跳过开始和结束的timeMaxRange个帧，以便在时间维度上能进行完整比较
     
 
     // 根据wndStartIdx前面的元素数量，确定时间维度上需要跳过的元素数量
-    const auto startIdx = std::max(wndStartIdx, static_cast<int>(peakConfig.timeMaxRange));
     for (size_t frameIdx = startIdx; frameIdx < wndEndIdx; ++frameIdx) {
         
         const auto& currentFrame = fftResults[frameIdx];
@@ -327,8 +369,8 @@ std::vector<Peak> PeekDetector::extractPeaksFromFFTResults(
             
             float currentMagnitude = currentFrame.magnitudes[freqIdx];
             
-            // 检查最小幅度阈值
-            if (currentMagnitude < peakConfig.minPeakMagnitude) {
+            // 检查双重幅度阈值：局部条件（大于分位数阈值）+ 全局兜底条件（大于最小峰值幅度）
+            if (currentMagnitude <= quantileMagnitude || currentMagnitude < peakConfig.minPeakMagnitude) {
                 continue;
             }
             
@@ -336,8 +378,8 @@ std::vector<Peak> PeekDetector::extractPeaksFromFFTResults(
             // 确保当前频率bin的幅度比其前后localMaxRange个bin的幅度都大
             bool isFreqPeak = true;
             for (size_t j = 1; j <= peakConfig.localMaxRange; ++j) {
-                if (currentMagnitude <= currentFrame.magnitudes[freqIdx - j] || 
-                    currentMagnitude <= currentFrame.magnitudes[freqIdx + j]) {
+                if (currentMagnitude < currentFrame.magnitudes[freqIdx - j] || 
+                    currentMagnitude < currentFrame.magnitudes[freqIdx + j]) {
                     isFreqPeak = false;
                     break;
                 }
@@ -352,13 +394,13 @@ std::vector<Peak> PeekDetector::extractPeaksFromFFTResults(
             bool isTimePeak = true;
             for (size_t j = 1; j <= peakConfig.timeMaxRange; ++j) {
                 // 与前面的帧比较
-                if (currentMagnitude <= fftResults[frameIdx - j].magnitudes[freqIdx]) {
+                if (currentMagnitude < fftResults[frameIdx - j].magnitudes[freqIdx]) {
                     isTimePeak = false;
                     break;
                 }
                 
                 // 与后面的帧比较
-                if (currentMagnitude <= fftResults[frameIdx + j].magnitudes[freqIdx]) {
+                if (currentMagnitude < fftResults[frameIdx + j].magnitudes[freqIdx]) {
                     isTimePeak = false;
                     break;
                 }

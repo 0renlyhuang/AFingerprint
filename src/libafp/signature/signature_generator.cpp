@@ -355,20 +355,20 @@ void SignatureGenerator::processShortFrame(const float* frameBuffer,
         buffer_[i] -= 0.95f * buffer_[i-1];
     }
     
-    // 应用高通滤波器，截止频率由cutoffRatio决定
-    // 简单的一阶IIR高通滤波器：y[n] = α * (y[n-1] + x[n] - x[n-1])
-    float cutoffRatio = 0.05f; // 大约对应于5%的采样频率
-    float alpha = 1.0f / (1.0f + 2.0f * M_PI * cutoffRatio);
-    float prevInput = buffer_[0];
-    float prevOutput = 0.0f;
+    // // 应用高通滤波器，截止频率由cutoffRatio决定
+    // // 简单的一阶IIR高通滤波器：y[n] = α * (y[n-1] + x[n] - x[n-1])
+    // float cutoffRatio = 0.05f; // 大约对应于5%的采样频率
+    // float alpha = 1.0f / (1.0f + 2.0f * M_PI * cutoffRatio);
+    // float prevInput = buffer_[0];
+    // float prevOutput = 0.0f;
     
-    for (size_t i = 0; i < fftSize_; ++i) {
-        float currentInput = buffer_[i];
-        float currentOutput = alpha * (prevOutput + currentInput - prevInput);
-        buffer_[i] = currentOutput;
-        prevInput = currentInput;
-        prevOutput = currentOutput;
-    }
+    // for (size_t i = 0; i < fftSize_; ++i) {
+    //     float currentInput = buffer_[i];
+    //     float currentOutput = alpha * (prevOutput + currentInput - prevInput);
+    //     buffer_[i] = currentOutput;
+    //     prevInput = currentInput;
+    //     prevOutput = currentOutput;
+    // }
     
     // 检查预加重后的数据（仅对第一个通道）
     if (channel == 0) {
