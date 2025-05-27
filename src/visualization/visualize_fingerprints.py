@@ -41,6 +41,12 @@ _tk_root = None
 # 全局音频播放器引用，用于在窗口关闭时停止播放
 _current_audio_player = None
 
+# 全局刷新率配置
+REFRESH_RATE_30FPS = 33  # 30fps = 33ms间隔
+REFRESH_RATE_60FPS = 16  # 60fps = 16ms间隔
+_ui_refresh_interval = REFRESH_RATE_30FPS  # 默认30fps
+_playback_update_interval = 0.033  # 默认33ms更新间隔
+
 def get_screen_size():
     """获取屏幕尺寸，使用单例模式管理tkinter实例"""
     global _tk_root
@@ -387,11 +393,11 @@ class AudioPlayer:
                                 
                                 # 减少更新频率，避免过多的UI更新请求
                                 current_time = time.time()
-                                if current_time - self.last_update_time > 0.1:  # 限制每100ms更新一次
+                                if current_time - self.last_update_time > _playback_update_interval:  # 使用全局刷新率配置
                                     self.last_update_time = current_time
                                 
                                 # 不再直接调用plt.pause
-                                time.sleep(0.01)  # 让出CPU时间，但不调用matplotlib
+                                time.sleep(0.005)  # 让出CPU时间，但不调用matplotlib（5ms）
                             except Exception as block_error:
                                 print(f"块播放错误: {block_error}")
                                 # 继续尝试播放下一块
@@ -1119,9 +1125,9 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
                 fig.canvas.draw_idle()
             return []
         
-        # 每100ms更新一次UI
+        # 使用全局刷新率配置
         from matplotlib.animation import FuncAnimation
-        ani = FuncAnimation(fig, update_playback_ui, interval=100, 
+        ani = FuncAnimation(fig, update_playback_ui, interval=_ui_refresh_interval, 
                           blit=True, cache_frame_data=False)
         # 保存动画对象的引用，防止被垃圾回收
         fig.ani = ani
@@ -1271,7 +1277,7 @@ def clean_filename_for_display(filename):
     return result
 
 def main():
-    global PCM_SAMPLE_RATE, PCM_CHANNELS, PCM_FORMAT
+    global PCM_SAMPLE_RATE, PCM_CHANNELS, PCM_FORMAT, _ui_refresh_interval, _playback_update_interval
     
     parser = argparse.ArgumentParser(description='Visualize audio fingerprints with audio playback')
     parser.add_argument('--source', type=str, help='Source audio fingerprint JSON file')
@@ -1284,10 +1290,22 @@ def main():
     parser.add_argument('--pcm-rate', type=int, default=PCM_SAMPLE_RATE, help='PCM sample rate (default: 44100)')
     parser.add_argument('--pcm-channels', type=int, default=PCM_CHANNELS, help='PCM channels (default: 1)')
     parser.add_argument('--pcm-format', type=str, default=PCM_FORMAT, help='PCM format (default: int16)')
+    # 刷新率参数
+    parser.add_argument('--high-refresh', action='store_true', help='Enable high refresh rate (60fps) for smoother audio playback visualization')
     # 诊断参数
     parser.add_argument('--debug-comparison', action='store_true', help='Run comparison visualization in debug mode')
     parser.add_argument('--force-backend', type=str, help='Force specific matplotlib backend (e.g., TkAgg, Qt5Agg)')
     args = parser.parse_args()
+    
+    # 设置刷新率
+    if args.high_refresh:
+        _ui_refresh_interval = REFRESH_RATE_60FPS
+        _playback_update_interval = 0.016  # 16ms更新间隔（约60fps）
+        print(f"启用高刷新率模式: 60fps (UI间隔: {_ui_refresh_interval}ms, 播放更新间隔: {_playback_update_interval*1000:.1f}ms)")
+    else:
+        _ui_refresh_interval = REFRESH_RATE_30FPS
+        _playback_update_interval = 0.033  # 33ms更新间隔（约30fps）
+        print(f"使用标准刷新率模式: 30fps (UI间隔: {_ui_refresh_interval}ms, 播放更新间隔: {_playback_update_interval*1000:.1f}ms)")
     
     # 强制切换后端（如果指定）
     if args.force_backend:
@@ -2038,9 +2056,9 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                 fig.canvas.draw_idle()
             return []
         
-        # 每100ms更新一次UI
+        # 使用全局刷新率配置
         from matplotlib.animation import FuncAnimation
-        ani = FuncAnimation(fig, update_playback_ui, interval=100, 
+        ani = FuncAnimation(fig, update_playback_ui, interval=_ui_refresh_interval, 
                           blit=True, cache_frame_data=False)
         # 保存动画对象的引用，防止被垃圾回收
         fig.ani = ani
@@ -2095,15 +2113,43 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                 query_sessions[session_id] = []
             query_sessions[session_id].append(point)
         
+        # 计算每个session的匹配点数量，并选择top 3
+        common_sessions = set(source_sessions.keys()) & set(query_sessions.keys())
+        session_match_counts = {}
+        
+        for session_id in common_sessions:
+            source_points = source_sessions[session_id]
+            query_points = query_sessions[session_id]
+            
+            # 计算实际的hash匹配数量
+            match_count = 0
+            for source_point in source_points:
+                source_hash = source_point[2] if len(source_point) > 2 else None
+                for query_point in query_points:
+                    query_hash = query_point[2] if len(query_point) > 2 else None
+                    if source_hash == query_hash and source_hash is not None:
+                        match_count += 1
+                        break  # 找到匹配后跳出内层循环
+            
+            session_match_counts[session_id] = match_count
+        
+        # 按匹配数量排序，选择top 3
+        top_sessions = sorted(session_match_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+        top_session_ids = [session_id for session_id, count in top_sessions]
+        
+        print(f"所有session匹配数量: {session_match_counts}")
+        print(f"Top 3 sessions: {[(sid, count) for sid, count in top_sessions]}")
+        
         # 为每个session绘制Source到Query的连线
         session_colors = ['red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
         
-        for session_id in set(source_sessions.keys()) & set(query_sessions.keys()):
+        # 只为top 3个session绘制连线
+        for session_id in top_session_ids:
             color = session_colors[session_id % len(session_colors)]
             source_points = source_sessions[session_id]
             query_points = query_sessions[session_id]
             
-            print(f"Session {session_id}: {len(source_points)} 源点, {len(query_points)} 查询点")
+            print(f"绘制连线 - Session {session_id}: {len(source_points)} 源点, {len(query_points)} 查询点")
             
             # 为每个源点找到对应的查询点（基于hash匹配）
             for source_point in source_points:
@@ -2124,13 +2170,13 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                             xyA=(source_time, source_freq), coordsA=ax1.transData,
                             xyB=(query_time, query_freq), coordsB=ax2.transData,
                             axesA=ax1, axesB=ax2,
-                            color=color, alpha=0.6, linewidth=1.5, linestyle='-'
+                            color=color, alpha=1, linewidth=1.5, linestyle='--'
                         )
                         fig.add_artist(con)
                         print(f"  连线: Source({source_time:.2f}s, {source_freq}Hz) -> Query({query_time:.2f}s, {query_freq}Hz)")
                         break  # 找到匹配后跳出内层循环
         
-        print(f"完成Source和Query之间的匹配连线绘制")
+        print(f"完成Source和Query之间的匹配连线绘制 (仅top 3 sessions)")
     
     return fig, (ax1, ax2)
 
