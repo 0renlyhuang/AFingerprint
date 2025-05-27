@@ -185,7 +185,9 @@ private:
         size_t matchCount;                  // 匹配点数量
         std::vector<DebugMatchInfo> matchInfos;           // 匹配信息
         double lastMatchTime;               // 最后一次匹配的时间戳
-        int32_t offset;                     // 时间偏移
+        int32_t offset;                     // 时间偏移（毫秒，用于session key）
+        int32_t actualOffsetSum;             // 累积的实际时间偏移（毫秒）
+        size_t offsetCount;                 // 偏移计数，用于计算平均值
         bool isMatchCountChanged;           // 是否匹配点数量发生变化
         bool isNotified;                    // 是否已通知
     };
@@ -196,6 +198,9 @@ private:
     // Visualization data
     bool collectVisualizationData_ = false;
     VisualizationData visualizationData_;
+    
+    // Helper method for merging sessions with similar time offsets
+    void mergeSimilarSessions();
 };
 
 } // namespace afp 
