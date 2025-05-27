@@ -22,7 +22,6 @@ struct FFTConfig {
 struct PeakDetectionConfig {
     size_t localMaxRange;      // 检查频率维度本地最大值的范围
     size_t timeMaxRange;       // 检查时间维度本地最大值的范围
-    size_t maxPeaksPerFrame;   // 每帧保留的最强峰值数
     float minPeakMagnitude;    // 最小峰值幅度阈值
     size_t minFreq;           // 最小频率 (Hz)
     size_t maxFreq;           // 最大频率 (Hz)
