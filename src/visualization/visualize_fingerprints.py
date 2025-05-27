@@ -515,373 +515,13 @@ class AudioPlayer:
             print(f"UI更新错误: {e}")
             return False
 
-def create_interactive_plot(data, plot_type='extraction', audio_player=None):
-    """Create interactive plot with hover information and audio controls"""
-    global _current_audio_player
-    # Store reference to audio player for cleanup
-    _current_audio_player = audio_player
-    
-    # 获取屏幕尺寸（使用改进的方法）
-    screen_width, screen_height = get_screen_size()
-    
-    # 设置为屏幕宽度的2/3，高度的2/3
-    fig_width = screen_width * 2 / 3 / 100  # 转换为英寸 (假设DPI=100)
-    fig_height = screen_height * 2 / 3 / 100
-    print(f"调整窗口大小: {fig_width:.1f}x{fig_height:.1f} inches (屏幕: {screen_width}x{screen_height})")
-    
-    # Create figure with room for audio controls at the bottom
-    grid = gridspec.GridSpec(2, 1, height_ratios=[4, 1] if audio_player and audio_player.data is not None else [1, 0])
-    fig = plt.figure(figsize=(fig_width, fig_height))
-    ax = fig.add_subplot(grid[0])
-    
-    # Store annotation objects
-    annot = ax.annotate("", xy=(0, 0), xytext=(20, 20),
-                        textcoords="offset points",
-                        bbox=dict(boxstyle="round", fc="w"),
-                        arrowprops=dict(arrowstyle="->"))
-    annot.set_visible(False)
-    
-    # Plot data based on type
-    if plot_type == 'extraction':
-        # 检测和处理幅度值
-        amplitude_info = detect_and_normalize_amplitude_values(data['allPeaks'])
-        
-        # Plot all peaks
-        peaks_scatter = ax.scatter([peak[1] for peak in data['allPeaks']], 
-                                  [peak[0] for peak in data['allPeaks']], 
-                                  c=amplitude_info['amplitudes'], 
-                                  cmap='viridis', alpha=0.8, 
-                                  s=amplitude_info['sizes'],
-                                  vmin=0, vmax=100,
-                                  label='All Peaks')
-        
-        # Plot fingerprint points - 使用空心三角形以增强区分度
-        fp_scatter = ax.scatter([point[1] for point in data['fingerprintPoints']], 
-                               [point[0] for point in data['fingerprintPoints']], 
-                               facecolors='none', edgecolors='red', s=20, marker='^', 
-                               linewidth=2, label='Fingerprint Points')
-        
-        # Initialize matched_scatter to None for extraction mode
-        matched_scatter = None
-        
-        # Set title and labels
-        ax.set_title(f"Audio Fingerprint Extraction: {data['title']}")
-        
-        # Create hover function
-        def update_annot(ind, scatter_obj, point_type):
-            index = ind["ind"][0]
-            if scatter_obj == peaks_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                annot.xy = pos
-                # 使用原始幅度值和适当的格式进行显示
-                original_amp = amplitude_info['original_amplitudes'][index]
-                text = f"Peak\nFreq: {data['allPeaks'][index][0]} Hz\nTime: {data['allPeaks'][index][1]:.2f} s\nAmplitude: {original_amp:{amplitude_info['amplitude_format']}}"
-                if amplitude_info['is_absolute_log_scale']:
-                    text += " dB"
-            else:  # fingerprint points
-                pos = scatter_obj.get_offsets()[index]
-                annot.xy = pos
-                point = data['fingerprintPoints'][index]
-                text = f"Fingerprint\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
-            annot.set_text(text)
-            annot.get_bbox_patch().set_alpha(0.9)
-    
-    elif plot_type == 'matching':
-        # 检测和处理幅度值
-        amplitude_info = detect_and_normalize_amplitude_values(data['allPeaks'])
-        
-        # Plot all peaks
-        peaks_scatter = ax.scatter([peak[1] for peak in data['allPeaks']], 
-                                  [peak[0] for peak in data['allPeaks']], 
-                                  c=amplitude_info['amplitudes'], 
-                                  cmap='viridis', alpha=0.8,
-                                  s=amplitude_info['sizes'],
-                                  vmin=0, vmax=100,
-                                  label='All Peaks')
-        
-        # Plot fingerprint points - 使用空心三角形以增强区分度
-        fp_scatter = ax.scatter([point[1] for point in data['fingerprintPoints']], 
-                               [point[0] for point in data['fingerprintPoints']], 
-                               facecolors='none', edgecolors='red', s=20, marker='^', 
-                               linewidth=0.5, label='Fingerprint Points')
-        
-        # Plot matched points
-        matched_scatter = None
-        if 'matchedPoints' in data and data['matchedPoints']:
-            matched_scatter = ax.scatter([point[1] for point in data['matchedPoints']], 
-                                        [point[0] for point in data['matchedPoints']], 
-                                        color='orange', s=150, alpha=0.8, marker='*', 
-                                        label='Matched Points')
-        
-        # Set title and labels
-        ax.set_title(f"Audio Fingerprint Matching: {data['title']}")
-        
-        # Create hover function
-        def update_annot(ind, scatter_obj, point_type):
-            index = ind["ind"][0]
-            if scatter_obj == peaks_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                annot.xy = pos
-                # 使用原始幅度值和适当的格式进行显示
-                original_amp = amplitude_info['original_amplitudes'][index]
-                text = f"Peak\nFreq: {data['allPeaks'][index][0]} Hz\nTime: {data['allPeaks'][index][1]:.2f} s\nAmplitude: {original_amp:{amplitude_info['amplitude_format']}}"
-                if amplitude_info['is_absolute_log_scale']:
-                    text += " dB"
-            elif scatter_obj == fp_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                annot.xy = pos
-                point = data['fingerprintPoints'][index]
-                text = f"Fingerprint\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
-            elif matched_scatter and scatter_obj == matched_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                annot.xy = pos
-                point = data['matchedPoints'][index]
-                text = f"Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {point[3] if len(point) > 3 else 'N/A'}"
-            annot.set_text(text)
-            annot.get_bbox_patch().set_alpha(0.9)
-    
-    # Set common properties
-    ax.set_xlabel('Time (s)')
-    ax.set_ylabel('Frequency (Hz)')
-    ax.set_ylim(0, 5000)  # Limit frequency display range
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-    
-    # Add a colorbar for amplitude visualization
-    amplitude_label = "Amplitude (dB)" if amplitude_info['is_absolute_log_scale'] else "Amplitude"
-    cbar = fig.colorbar(peaks_scatter, ax=ax, label=amplitude_label, pad=0.01)
-    cbar.set_label(amplitude_label)
-    
-    # 计算数据中峰值的最大时间
-    max_time_from_data = 0
-    if data['allPeaks']:
-        max_time_from_data = max(peak[1] for peak in data['allPeaks'])
-    if data['fingerprintPoints']:
-        max_fp_time = max(point[1] for point in data['fingerprintPoints'])
-        max_time_from_data = max(max_time_from_data, max_fp_time)
-    if 'matchedPoints' in data and data['matchedPoints']:
-        max_matched_time = max(point[1] for point in data['matchedPoints'])
-        max_time_from_data = max(max_time_from_data, max_matched_time)
-    
-    # 添加一点边距
-    if max_time_from_data > 0:
-        max_time_from_data += max_time_from_data * 0.05  # 增加5%的边距
-    else:
-        max_time_from_data = 10  # 默认值
-        
-    print(f"数据中的最大时间: {max_time_from_data:.2f}s")
-    
-    # Add playback position line if audio player is provided
-    if audio_player and audio_player.data is not None:
-        # Add a vertical line to show playback position
-        audio_player.playback_line = ax.axvline(x=0, color='green', linestyle='-', linewidth=2)
-        
-        # 使用数据中的最大时间和音频时长的较大值作为横轴范围
-        final_max_time = max(max_time_from_data, audio_player.duration)
-        ax.set_xlim(0, final_max_time)
-        print(f"设置横轴范围: 0 到 {final_max_time:.2f}s (数据最大时间: {max_time_from_data:.2f}s, 音频时长: {audio_player.duration:.2f}s)")
-        
-        # Create audio control panel
-        controls_ax = fig.add_subplot(grid[1])
-        controls_ax.set_facecolor('lightgray')
-        controls_ax.set_xticks([])
-        controls_ax.set_yticks([])
-        
-        # 使用新的相对布局系统创建音频控件
-        controls = create_audio_controls_layout(fig, controls_ax, source_audio_player=audio_player if plot_type == 'extraction' else None,
-                                               query_audio_player=audio_player if plot_type == 'matching' else None)
-        texts = create_audio_text_layout(controls_ax, 
-                                        source_audio_player=audio_player if plot_type == 'extraction' else None,
-                                        query_audio_player=audio_player if plot_type == 'matching' else None)
-        
-        # Add playback position lines and set axis ranges
-        if source_audio_player and source_audio_player.data is not None:
-            source_audio_player.playback_line = ax.axvline(x=0, color='orange', linestyle='-', linewidth=2)
-            # 使用数据中的最大时间和音频时长的较大值
-            source_final_max_time = max(max_time_from_data, source_audio_player.duration)
-            ax.set_xlim(0, source_final_max_time)
-            print(f"设置源图横轴范围: 0 到 {source_final_max_time:.2f}s (数据最大时间: {max_time_from_data:.2f}s, 音频时长: {source_audio_player.duration:.2f}s)")
-        else:
-            # 如果没有源音频播放器，只使用数据中的最大时间
-            ax.set_xlim(0, max_time_from_data)
-            print(f"设置源图横轴范围: 0 到 {max_time_from_data:.2f}s (仅基于数据)")
-        
-        if query_audio_player and query_audio_player.data is not None:
-            query_audio_player.playback_line = ax.axvline(x=0, color='green', linestyle='-', linewidth=2)
-            # 使用数据中的最大时间和音频时长的较大值
-            query_final_max_time = max(max_time_from_data, query_audio_player.duration)
-            ax.set_xlim(0, query_final_max_time)
-            print(f"设置查询图横轴范围: 0 到 {query_final_max_time:.2f}s (数据最大时间: {max_time_from_data:.2f}s, 音频时长: {query_audio_player.duration:.2f}s)")
-        else:
-            # 如果没有查询音频播放器，只使用数据中的最大时间
-            ax.set_xlim(0, max_time_from_data)
-            print(f"设置查询图横轴范围: 0 到 {max_time_from_data:.2f}s (仅基于数据)")
-        
-        # 设置按钮引用
-        if source_audio_player and 'source' in controls:
-            source_audio_player.play_button = controls['source']['play_button']
-        if query_audio_player and 'query' in controls:
-            query_audio_player.play_button = controls['query']['play_button']
-        
-        # 创建源音频控制事件处理器
-        if source_audio_player and 'source' in controls:
-            def on_source_play(event):
-                print(f"\n===== 源音频播放按钮被点击 =====")
-                if source_audio_player.playing:
-                    print("停止源音频播放")
-                    source_audio_player.stop()
-                    controls['source']['play_button'].label.set_text('Play Source')
-                else:
-                    if source_audio_player.current_time >= source_audio_player.duration - 0.1:
-                        print("源音频从头开始播放")
-                        source_audio_player.restart()
-                    else:
-                        print(f"源音频从当前位置继续播放: {source_audio_player.current_time:.2f}秒")
-                        source_audio_player.play(source_audio_player.current_time)
-                    controls['source']['play_button'].label.set_text('Pause Source')
-                controls['source']['play_button'].ax.figure.canvas.draw_idle()
-            
-            def on_source_stop(event):
-                print("源音频停止按钮被点击")
-                source_audio_player.stop()
-                controls['source']['play_button'].label.set_text('Play Source')
-                controls['source']['play_button'].ax.figure.canvas.draw_idle()
-            
-            def on_source_slider_changed(val):
-                print(f"源音频滑块被调整: {val:.2f}")
-                source_audio_player.seek(val)
-            
-            controls['source']['play_button'].on_clicked(on_source_play)
-            controls['source']['stop_button'].on_clicked(on_source_stop)
-            controls['source']['time_slider'].on_changed(on_source_slider_changed)
-        
-        # 创建查询音频控制事件处理器
-        if query_audio_player and 'query' in controls:
-            def on_query_play(event):
-                print(f"\n===== 查询音频播放按钮被点击 =====")
-                if query_audio_player.playing:
-                    print("停止查询音频播放")
-                    query_audio_player.stop()
-                    controls['query']['play_button'].label.set_text('Play Query')
-                else:
-                    if query_audio_player.current_time >= query_audio_player.duration - 0.1:
-                        print("查询音频从头开始播放")
-                        query_audio_player.restart()
-                    else:
-                        print(f"查询音频从当前位置继续播放: {query_audio_player.current_time:.2f}秒")
-                        query_audio_player.play(query_audio_player.current_time)
-                    controls['query']['play_button'].label.set_text('Pause Query')
-                controls['query']['play_button'].ax.figure.canvas.draw_idle()
-            
-            def on_query_stop(event):
-                print("查询音频停止按钮被点击")
-                query_audio_player.stop()
-                controls['query']['play_button'].label.set_text('Play Query')
-                controls['query']['play_button'].ax.figure.canvas.draw_idle()
-            
-            def on_query_slider_changed(val):
-                print(f"查询音频滑块被调整: {val:.2f}")
-                query_audio_player.seek(val)
-            
-            controls['query']['play_button'].on_clicked(on_query_play)
-            controls['query']['stop_button'].on_clicked(on_query_stop)
-            controls['query']['time_slider'].on_changed(on_query_slider_changed)
-        
-        # Add click handler to seek in the main plot
-        def on_plot_click(event):
-            if event.inaxes == ax:
-                time_pos = event.xdata
-                if time_pos is not None:
-                    if time_pos < 0:
-                        time_pos = 0
-                    elif audio_player and time_pos > audio_player.duration:
-                        time_pos = audio_player.duration
-                    
-                    if audio_player:
-                        audio_player.seek(time_pos)
-        
-        fig.canvas.mpl_connect('button_press_event', on_plot_click)
-        
-        # 设置定时器用于更新播放进度
-        def update_playback_ui(frame):
-            updated = False
-            if audio_player and audio_player.playing:
-                if audio_player.update_ui():
-                    updated = True
-            if updated:
-                fig.canvas.draw_idle()
-            return []
-        
-        # 每100ms更新一次UI
-        from matplotlib.animation import FuncAnimation
-        ani = FuncAnimation(fig, update_playback_ui, interval=100, 
-                          blit=True, cache_frame_data=False)
-        # 保存动画对象的引用，防止被垃圾回收
-        fig.ani = ani
-    else:
-        # 如果没有音频播放器，根据数据设置横轴范围
-        ax.set_xlim(0, max_time_from_data)
-    
-    # Create hover callback
-    def hover(event):
-        vis = annot.get_visible()
-        if event.inaxes == ax:
-            for scatter_obj, point_type in [(peaks_scatter, "peak"), 
-                                           (fp_scatter, "fingerprint")]:
-                cont, ind = scatter_obj.contains(event)
-                if cont:
-                    update_annot(ind, scatter_obj, point_type)
-                    annot.set_visible(True)
-                    fig.canvas.draw_idle()
-                    return
-            
-            # Check matched points if available
-            if 'matchedPoints' in data and data['matchedPoints']:
-                if matched_scatter:
-                    cont, ind = matched_scatter.contains(event)
-                    if cont:
-                        update_annot(ind, matched_scatter, "match")
-                        annot.set_visible(True)
-                        fig.canvas.draw_idle()
-                        return
-        
-        if vis:
-            annot.set_visible(False)
-            fig.canvas.draw_idle()
-    
-    # Connect hover event
-    fig.canvas.mpl_connect("motion_notify_event", hover)
-    
-    # 添加窗口关闭事件处理
-    def on_close(event):
-        print("Window close event detected - cleaning up resources")
-        if audio_player:
-            audio_player.stop()
-        if plt.fignum_exists(fig.number):
-            plt.close(fig)
-        plt.close('all')
-    
-    # 添加键盘事件处理
-    def on_key(event):
-        if event.key == 'escape':
-            print("ESC键被按下 - 关闭窗口")
-            if audio_player:
-                audio_player.stop()
-            if plt.fignum_exists(fig.number):
-                plt.close(fig)
-    
-    # 注册窗口事件
-    fig.canvas.mpl_connect('close_event', on_close)
-    fig.canvas.mpl_connect('key_press_event', on_key)
-    
-    plt.tight_layout(rect=[0, 0, 0, 0])
-    
-    return fig, ax
-
-def create_audio_controls_layout(fig, controls_ax, source_audio_player=None, query_audio_player=None):
+def create_audio_controls_layout(fig, controls_ax, source_audio_player=None, query_audio_player=None, unified_max_time=None):
     """
     创建响应式的音频控制面板布局
     使用相对位置和自适应间距，确保元素不会重叠
+    
+    Args:
+        unified_max_time: 统一的横轴最大时间，用于设置滑块范围
     """
     # 获取控制面板的位置和大小
     pos = controls_ax.get_position()
@@ -926,7 +566,9 @@ def create_audio_controls_layout(fig, controls_ax, source_audio_player=None, que
         # Time slider (居中)
         slider_x = center_x - slider_width / 2
         slider_ax = plt.axes([slider_x, slider_y, slider_width, height * slider_height])
-        time_slider = Slider(slider_ax, f'{label_prefix} Time', 0, audio_player.duration, valinit=0)
+        # 使用统一的最大时间，如果没有提供则使用音频播放器的时长
+        slider_max_time = unified_max_time if unified_max_time is not None else audio_player.duration
+        time_slider = Slider(slider_ax, f'{label_prefix} Time', 0, slider_max_time, valinit=0)
         
         controls[label_prefix.lower()] = {
             'play_button': play_button,
@@ -961,7 +603,9 @@ def create_audio_controls_layout(fig, controls_ax, source_audio_player=None, que
             # Source time slider
             source_slider_x = source_panel_left + (panel_width - slider_width) / 2
             source_slider_ax = plt.axes([source_slider_x, slider_y, slider_width, height * slider_height])
-            source_time_slider = Slider(source_slider_ax, 'Source Time', 0, source_audio_player.duration, valinit=0)
+            # 使用统一的最大时间，如果没有提供则使用源音频播放器的时长
+            source_slider_max_time = unified_max_time if unified_max_time is not None else source_audio_player.duration
+            source_time_slider = Slider(source_slider_ax, 'Source Time', 0, source_slider_max_time, valinit=0)
             
             controls['source'] = {
                 'play_button': source_play_button,
@@ -987,7 +631,9 @@ def create_audio_controls_layout(fig, controls_ax, source_audio_player=None, que
             # Query time slider
             query_slider_x = query_panel_left + (panel_width - slider_width) / 2
             query_slider_ax = plt.axes([query_slider_x, slider_y, slider_width, height * slider_height])
-            query_time_slider = Slider(query_slider_ax, 'Query Time', 0, query_audio_player.duration, valinit=0)
+            # 使用统一的最大时间，如果没有提供则使用查询音频播放器的时长
+            query_slider_max_time = unified_max_time if unified_max_time is not None else query_audio_player.duration
+            query_time_slider = Slider(query_slider_ax, 'Query Time', 0, query_slider_max_time, valinit=0)
             
             controls['query'] = {
                 'play_button': query_play_button,
@@ -1121,6 +767,421 @@ def create_audio_text_layout(controls_ax, source_audio_player=None, query_audio_
             }
     
     return texts
+
+def create_interactive_plot(data, plot_type='extraction', audio_player=None):
+    """Create interactive plot with hover information and audio controls"""
+    global _current_audio_player
+    # Store reference to audio player for cleanup
+    _current_audio_player = audio_player
+    
+    # 获取屏幕尺寸（使用改进的方法）
+    screen_width, screen_height = get_screen_size()
+    
+    # 设置为屏幕宽度的2/3，高度的2/3
+    fig_width = screen_width * 2 / 3 / 100  # 转换为英寸 (假设DPI=100)
+    fig_height = screen_height * 2 / 3 / 100
+    print(f"调整窗口大小: {fig_width:.1f}x{fig_height:.1f} inches (屏幕: {screen_width}x{screen_height})")
+    
+    # Create figure with room for audio controls at the bottom
+    grid = gridspec.GridSpec(2, 1, height_ratios=[4, 1] if audio_player and audio_player.data is not None else [1, 0])
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    ax = fig.add_subplot(grid[0])
+    
+    # Store annotation objects
+    annot = ax.annotate("", xy=(0, 0), xytext=(20, 20),
+                        textcoords="offset points",
+                        bbox=dict(boxstyle="round", fc="w"),
+                        arrowprops=dict(arrowstyle="->"))
+    annot.set_visible(False)
+    
+    # Plot data based on type
+    if plot_type == 'extraction':
+        # 检测和处理幅度值
+        amplitude_info = detect_and_normalize_amplitude_values(data['allPeaks'])
+        
+        # Plot all peaks
+        peaks_scatter = ax.scatter([peak[1] for peak in data['allPeaks']], 
+                                  [peak[0] for peak in data['allPeaks']], 
+                                  c=amplitude_info['amplitudes'], 
+                                  cmap='viridis', alpha=0.8, 
+                                  s=amplitude_info['sizes'],
+                                  vmin=0, vmax=100,
+                                  label='All Peaks')
+        
+        # Plot fingerprint points - 使用空心三角形以增强区分度
+        fp_scatter = ax.scatter([point[1] for point in data['fingerprintPoints']], 
+                               [point[0] for point in data['fingerprintPoints']], 
+                               facecolors='none', edgecolors='red', s=20, marker='^', 
+                               linewidth=2, label='Fingerprint Points')
+        
+        # Initialize matched_scatter to None for extraction mode
+        matched_scatter = None
+        
+        # Set title and labels
+        ax.set_title(f"Audio Fingerprint Extraction: {data['title']}")
+        
+        # Create hover function
+        def update_annot(ind, scatter_obj, point_type):
+            index = ind["ind"][0]
+            if scatter_obj == peaks_scatter:
+                pos = scatter_obj.get_offsets()[index]
+                annot.xy = pos
+                # 使用原始幅度值和适当的格式进行显示
+                original_amp = amplitude_info['original_amplitudes'][index]
+                text = f"Peak\nFreq: {data['allPeaks'][index][0]} Hz\nTime: {data['allPeaks'][index][1]:.2f} s\nAmplitude: {original_amp:{amplitude_info['amplitude_format']}}"
+                if amplitude_info['is_absolute_log_scale']:
+                    text += " dB"
+            elif scatter_obj == fp_scatter:
+                pos = scatter_obj.get_offsets()[index]
+                annot.xy = pos
+                point = data['fingerprintPoints'][index]
+                text = f"Fingerprint\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
+            elif matched_scatter and scatter_obj == matched_scatter:
+                pos = scatter_obj.get_offsets()[index]
+                annot.xy = pos
+                point = data['matchedPoints'][index]
+                text = f"Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {point[3] if len(point) > 3 else 'N/A'}"
+            else:
+                # 检查是否是session散点图
+                for session_id, session_scatter in session_scatters.items():
+                    if scatter_obj == session_scatter:
+                        pos = scatter_obj.get_offsets()[index]
+                        annot.xy = pos
+                        # 找到对应的匹配点
+                        session_points = [p for p in data['matchedPoints'] if len(p) > 3 and p[3] == session_id]
+                        if index < len(session_points):
+                            point = session_points[index]
+                            text = f"Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {session_id}"
+                        else:
+                            text = f"Session {session_id} Match"
+                        break
+            annot.set_text(text)
+            annot.get_bbox_patch().set_alpha(0.9)
+    
+    elif plot_type == 'matching':
+        # 检测和处理幅度值
+        amplitude_info = detect_and_normalize_amplitude_values(data['allPeaks'])
+        
+        # Plot all peaks
+        peaks_scatter = ax.scatter([peak[1] for peak in data['allPeaks']], 
+                                  [peak[0] for peak in data['allPeaks']], 
+                                  c=amplitude_info['amplitudes'], 
+                                  cmap='viridis', alpha=0.8,
+                                  s=amplitude_info['sizes'],
+                                  vmin=0, vmax=100,
+                                  label='All Peaks')
+        
+        # Plot fingerprint points - 使用空心三角形以增强区分度
+        fp_scatter = ax.scatter([point[1] for point in data['fingerprintPoints']], 
+                               [point[0] for point in data['fingerprintPoints']], 
+                               facecolors='none', edgecolors='red', s=20, marker='^', 
+                               linewidth=0.5, label='Fingerprint Points')
+        
+        # Plot matched points - 支持session五角星标记
+        matched_scatter = None
+        session_scatters = {}  # 存储不同session的散点图对象
+        if 'matchedPoints' in data and data['matchedPoints']:
+            print(f"绘制匹配点: {len(data['matchedPoints'])} 个")
+            
+            # 检查是否有session信息
+            if len(data['matchedPoints'][0]) > 3:  # 有session ID
+                # 按session ID分组
+                session_points = {}
+                for point in data['matchedPoints']:
+                    session_id = point[3] if len(point) > 3 else 0
+                    if session_id not in session_points:
+                        session_points[session_id] = []
+                    session_points[session_id].append(point)
+                
+                # 为每个session使用不同的颜色，所有都用五角星标记
+                session_colors = ['red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+                
+                for i, (session_id, points) in enumerate(session_points.items()):
+                    color = session_colors[i % len(session_colors)]
+                    
+                    # 绘制五角星标记的匹配点
+                    scatter = ax.scatter([point[1] for point in points], 
+                                        [point[0] for point in points], 
+                                        color=color, s=150, alpha=1.0, marker='*',  # 统一使用五角星
+                                        edgecolors='black', linewidth=2,
+                                        label=f'Session {session_id} Matches')
+                    session_scatters[session_id] = scatter
+                    
+                    print(f"Session {session_id}: {len(points)} 个匹配点，颜色: {color}")
+            else:
+                # 没有session信息，使用单一颜色的五角星
+                matched_scatter = ax.scatter([point[1] for point in data['matchedPoints']], 
+                                            [point[0] for point in data['matchedPoints']], 
+                                            color='orange', s=150, alpha=1.0, marker='*',  # 统一使用五角星
+                                            edgecolors='black', linewidth=2,
+                                            label='Matched Points')
+        
+        # Set title and labels
+        ax.set_title(f"Audio Fingerprint Matching: {data['title']}")
+        
+        # Create hover function
+        def update_annot(ind, scatter_obj, point_type):
+            index = ind["ind"][0]
+            if scatter_obj == peaks_scatter:
+                pos = scatter_obj.get_offsets()[index]
+                annot.xy = pos
+                # 使用原始幅度值和适当的格式进行显示
+                original_amp = amplitude_info['original_amplitudes'][index]
+                text = f"Peak\nFreq: {data['allPeaks'][index][0]} Hz\nTime: {data['allPeaks'][index][1]:.2f} s\nAmplitude: {original_amp:{amplitude_info['amplitude_format']}}"
+                if amplitude_info['is_absolute_log_scale']:
+                    text += " dB"
+            elif scatter_obj == fp_scatter:
+                pos = scatter_obj.get_offsets()[index]
+                annot.xy = pos
+                point = data['fingerprintPoints'][index]
+                text = f"Fingerprint\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
+            elif matched_scatter and scatter_obj == matched_scatter:
+                pos = scatter_obj.get_offsets()[index]
+                annot.xy = pos
+                point = data['matchedPoints'][index]
+                text = f"Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {point[3] if len(point) > 3 else 'N/A'}"
+            else:
+                # 检查是否是session散点图
+                for session_id, session_scatter in session_scatters.items():
+                    if scatter_obj == session_scatter:
+                        pos = scatter_obj.get_offsets()[index]
+                        annot.xy = pos
+                        # 找到对应的匹配点
+                        session_points = [p for p in data['matchedPoints'] if len(p) > 3 and p[3] == session_id]
+                        if index < len(session_points):
+                            point = session_points[index]
+                            text = f"Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {session_id}"
+                        else:
+                            text = f"Session {session_id} Match"
+                        break
+            annot.set_text(text)
+            annot.get_bbox_patch().set_alpha(0.9)
+    
+    # Set common properties
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Frequency (Hz)')
+    ax.set_ylim(0, 5000)  # Limit frequency display range
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    
+    # Add a colorbar for amplitude visualization
+    amplitude_label = "Amplitude (dB)" if amplitude_info['is_absolute_log_scale'] else "Amplitude"
+    cbar = fig.colorbar(peaks_scatter, ax=ax, label=amplitude_label, pad=0.01)
+    cbar.set_label(amplitude_label)
+    
+    # 计算数据中峰值的最大时间
+    max_time_from_data = 0
+    if data['allPeaks']:
+        max_time_from_data = max(peak[1] for peak in data['allPeaks'])
+    if data['fingerprintPoints']:
+        max_fp_time = max(point[1] for point in data['fingerprintPoints'])
+        max_time_from_data = max(max_time_from_data, max_fp_time)
+    if 'matchedPoints' in data and data['matchedPoints']:
+        max_matched_time = max(point[1] for point in data['matchedPoints'])
+        max_time_from_data = max(max_time_from_data, max_matched_time)
+    
+    # 添加一点边距
+    if max_time_from_data > 0:
+        max_time_from_data += max_time_from_data * 0.05  # 增加5%的边距
+    else:
+        max_time_from_data = 10  # 默认值
+        
+    print(f"数据中的最大时间: {max_time_from_data:.2f}s")
+    
+    # Add playback position line if audio player is provided
+    if audio_player and audio_player.data is not None:
+        # Add a vertical line to show playback position
+        audio_player.playback_line = ax.axvline(x=0, color='green', linestyle='-', linewidth=2)
+        
+        # 使用数据中的最大时间和音频时长的较大值作为横轴范围
+        final_max_time = max(max_time_from_data, audio_player.duration)
+        ax.set_xlim(0, final_max_time)
+        print(f"设置横轴范围: 0 到 {final_max_time:.2f}s (数据最大时间: {max_time_from_data:.2f}s, 音频时长: {audio_player.duration:.2f}s)")
+        
+        # Create audio control panel
+        controls_ax = fig.add_subplot(grid[1])
+        controls_ax.set_facecolor('lightgray')
+        controls_ax.set_xticks([])
+        controls_ax.set_yticks([])
+        
+        # 使用新的相对布局系统创建音频控件
+        # 计算单个音频播放器模式下的统一最大时间
+        single_unified_max_time = max(max_time_from_data, audio_player.duration)
+        controls = create_audio_controls_layout(fig, controls_ax, source_audio_player=audio_player if plot_type == 'extraction' else None,
+                                               query_audio_player=audio_player if plot_type == 'matching' else None,
+                                               unified_max_time=single_unified_max_time)
+        texts = create_audio_text_layout(controls_ax, 
+                                        source_audio_player=audio_player if plot_type == 'extraction' else None,
+                                        query_audio_player=audio_player if plot_type == 'matching' else None)
+        
+        # Add playback position lines and set axis ranges
+        # 使用统一的最大时间设置横轴范围
+        if audio_player and audio_player.data is not None:
+            audio_player.playback_line = ax.axvline(x=0, color='orange' if plot_type == 'extraction' else 'green', linestyle='-', linewidth=2)
+            ax.set_xlim(0, single_unified_max_time)
+            print(f"设置图横轴范围: 0 到 {single_unified_max_time:.2f}s (数据最大时间: {max_time_from_data:.2f}s, 音频时长: {audio_player.duration:.2f}s)")
+        else:
+            # 如果没有音频播放器，只使用数据中的最大时间
+            ax.set_xlim(0, max_time_from_data)
+            print(f"设置图横轴范围: 0 到 {max_time_from_data:.2f}s (仅基于数据)")
+        
+        # 设置按钮引用
+        if audio_player and plot_type == 'extraction' and 'source' in controls:
+            audio_player.play_button = controls['source']['play_button']
+        elif audio_player and plot_type == 'matching' and 'query' in controls:
+            audio_player.play_button = controls['query']['play_button']
+        
+        # 创建音频控制事件处理器
+        if audio_player and plot_type == 'extraction' and 'source' in controls:
+            def on_play(event):
+                print(f"\n===== 音频播放按钮被点击 =====")
+                if audio_player.playing:
+                    print("停止音频播放")
+                    audio_player.stop()
+                    controls['source']['play_button'].label.set_text('Play Source')
+                else:
+                    if audio_player.current_time >= audio_player.duration - 0.1:
+                        print("音频从头开始播放")
+                        audio_player.restart()
+                    else:
+                        print(f"音频从当前位置继续播放: {audio_player.current_time:.2f}秒")
+                        audio_player.play(audio_player.current_time)
+                    controls['source']['play_button'].label.set_text('Pause Source')
+                controls['source']['play_button'].ax.figure.canvas.draw_idle()
+            
+            def on_stop(event):
+                print("音频停止按钮被点击")
+                audio_player.stop()
+                controls['source']['play_button'].label.set_text('Play Source')
+                controls['source']['play_button'].ax.figure.canvas.draw_idle()
+            
+            def on_slider_changed(val):
+                print(f"音频滑块被调整: {val:.2f}")
+                audio_player.seek(val)
+            
+            controls['source']['play_button'].on_clicked(on_play)
+            controls['source']['stop_button'].on_clicked(on_stop)
+            controls['source']['time_slider'].on_changed(on_slider_changed)
+        
+        elif audio_player and plot_type == 'matching' and 'query' in controls:
+            def on_play(event):
+                print(f"\n===== 音频播放按钮被点击 =====")
+                if audio_player.playing:
+                    print("停止音频播放")
+                    audio_player.stop()
+                    controls['query']['play_button'].label.set_text('Play Query')
+                else:
+                    if audio_player.current_time >= audio_player.duration - 0.1:
+                        print("音频从头开始播放")
+                        audio_player.restart()
+                    else:
+                        print(f"音频从当前位置继续播放: {audio_player.current_time:.2f}秒")
+                        audio_player.play(audio_player.current_time)
+                    controls['query']['play_button'].label.set_text('Pause Query')
+                controls['query']['play_button'].ax.figure.canvas.draw_idle()
+            
+            def on_stop(event):
+                print("音频停止按钮被点击")
+                audio_player.stop()
+                controls['query']['play_button'].label.set_text('Play Query')
+                controls['query']['play_button'].ax.figure.canvas.draw_idle()
+            
+            def on_slider_changed(val):
+                print(f"音频滑块被调整: {val:.2f}")
+                audio_player.seek(val)
+            
+            controls['query']['play_button'].on_clicked(on_play)
+            controls['query']['stop_button'].on_clicked(on_stop)
+            controls['query']['time_slider'].on_changed(on_slider_changed)
+        
+        # Add click handler to seek in the main plot
+        def on_plot_click(event):
+            if event.inaxes == ax:
+                time_pos = event.xdata
+                if time_pos is not None:
+                    if time_pos < 0:
+                        time_pos = 0
+                    elif audio_player and time_pos > audio_player.duration:
+                        time_pos = audio_player.duration
+                    
+                    if audio_player:
+                        audio_player.seek(time_pos)
+        
+        fig.canvas.mpl_connect('button_press_event', on_plot_click)
+        
+        # 设置定时器用于更新播放进度
+        def update_playback_ui(frame):
+            updated = False
+            if audio_player and audio_player.playing:
+                if audio_player.update_ui():
+                    updated = True
+            if updated:
+                fig.canvas.draw_idle()
+            return []
+        
+        # 每100ms更新一次UI
+        from matplotlib.animation import FuncAnimation
+        ani = FuncAnimation(fig, update_playback_ui, interval=100, 
+                          blit=True, cache_frame_data=False)
+        # 保存动画对象的引用，防止被垃圾回收
+        fig.ani = ani
+    else:
+        # 如果没有任何音频播放器，根据数据设置横轴范围
+        print("\n===== 没有音频播放器，根据数据设置横轴范围 =====")
+        ax.set_xlim(0, max_time_from_data)
+    
+    # Create hover callback
+    def hover(event):
+        vis = annot.get_visible()
+        if event.inaxes == ax:
+            # 检查所有散点图对象
+            scatter_objects = [(peaks_scatter, "peak"), (fp_scatter, "fingerprint")]
+            if matched_scatter:
+                scatter_objects.append((matched_scatter, "match"))
+            # 添加session散点图
+            for session_id, session_scatter in session_scatters.items():
+                scatter_objects.append((session_scatter, f"session_{session_id}"))
+            
+            for scatter_obj, point_type in scatter_objects:
+                cont, ind = scatter_obj.contains(event)
+                if cont:
+                    update_annot(ind, scatter_obj, point_type)
+                    annot.set_visible(True)
+                    fig.canvas.draw_idle()
+                    return
+        
+        if vis:
+            annot.set_visible(False)
+            fig.canvas.draw_idle()
+    
+    # Connect hover event
+    fig.canvas.mpl_connect("motion_notify_event", hover)
+    
+    # 添加窗口关闭事件处理
+    def on_close(event):
+        print("Window close event detected - cleaning up resources")
+        if audio_player:
+            audio_player.stop()
+        if plt.fignum_exists(fig.number):
+            plt.close(fig)
+        plt.close('all')
+    
+    # 添加键盘事件处理
+    def on_key(event):
+        if event.key == 'escape':
+            print("ESC键被按下 - 关闭窗口")
+            if audio_player:
+                audio_player.stop()
+            if plt.fignum_exists(fig.number):
+                plt.close(fig)
+    
+    # 注册窗口事件
+    fig.canvas.mpl_connect('close_event', on_close)
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    
+    plt.tight_layout(rect=[0, 0, 0, 0])
+    
+    return fig, ax
 
 def clean_filename_for_display(filename):
     """
@@ -1445,104 +1506,6 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # 在显示图形之前设置后端选项（已移至文件开头，这里保留为了兼容性）
-    # 使用更安全的显示图形方法
-    if args.output:
-        fig.savefig(args.output)
-        print(f"Saved plot to {args.output}")
-    else:
-        try:
-            # 使用不阻塞的方式显示，并确保事件循环正确处理
-            plt.show()
-        except Exception as e:
-            print(f"Error displaying plot: {e}")
-            # 尝试不同的显示方法作为备选
-            try:
-                plt.show(block=True)
-            except Exception as e2:
-                print(f"Alternative display method also failed: {e2}")
-
-    # 如果启用了比较可视化调试模式
-    if args.debug_comparison:
-        print("\n===== 比较可视化调试模式 =====")
-        # 设置默认测试文件
-        test_source = args.source or "./build/Debug/comparison_v_s_35_vs_source_source.json"
-        test_query = args.query or "./build/Debug/comparison_v_s_35_vs_source_query.json"
-        test_sessions = args.sessions or "./build/Debug/comparison_v_s_35_vs_source_sessions.json"
-        
-        print(f"使用测试文件:")
-        print(f"- 源数据: {test_source}")
-        print(f"- 查询数据: {test_query}")
-        print(f"- 会话数据: {test_sessions}")
-        
-        # 检查文件是否存在
-        for f, name in [(test_source, "源数据"), (test_query, "查询数据"), (test_sessions, "会话数据")]:
-            if os.path.exists(f):
-                print(f"✓ {name}文件存在")
-            else:
-                print(f"✗ {name}文件不存在: {f}")
-                if name != "会话数据":  # 会话数据是可选的
-                    print("错误: 必需的测试文件不存在，退出调试模式")
-                    sys.exit(1)
-        
-        # 加载数据
-        try:
-            source_data = load_data(test_source)
-            query_data = load_data(test_query)
-            top_sessions = None
-            if os.path.exists(test_sessions):
-                with open(test_sessions, 'r') as f:
-                    top_sessions = json.load(f)
-            
-            print("数据加载成功，准备创建比较可视化...")
-            
-            # 测试环境信息
-            print("\n环境信息:")
-            print(f"Python版本: {sys.version}")
-            print(f"Matplotlib版本: {plt.__version__}")
-            print(f"Numpy版本: {np.__version__}")
-            print(f"操作系统: {os.name}, {sys.platform}")
-            print(f"当前工作目录: {os.getcwd()}")
-            print(f"Matplotlib后端: {plt.get_backend()}")
-            
-            # 创建比较图并显示
-            fig, (ax1, ax2) = create_comparison_plot(source_data, query_data, top_sessions)
-            plt.tight_layout()
-            print("比较图创建成功，尝试显示...")
-            
-            # 确保图形显示
-            try:
-                plt.show(block=True)
-                print("图形显示成功")
-            except Exception as e:
-                print(f"图形显示失败: {e}")
-                import traceback
-                traceback.print_exc()
-                
-                # 尝试备用方法
-                print("尝试备用显示方法...")
-                for backend in ['TkAgg', 'Qt5Agg', 'WXAgg', 'Agg']:
-                    try:
-                        print(f"尝试使用 {backend} 后端...")
-                        plt.switch_backend(backend)
-                        plt.figure(fig.number)
-                        plt.show(block=True)
-                        print(f"{backend} 后端显示成功")
-                        break
-                    except Exception as be:
-                        print(f"{backend} 后端失败: {be}")
-                
-            print("比较可视化调试完成")
-            return
-        except Exception as e:
-            print(f"比较可视化调试失败: {e}")
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-            
-    # Check for audio playback capability
-    # ... existing code ...
-
 def clean_up():
     """清理资源"""
     global _tk_root, _current_audio_player
@@ -1615,14 +1578,44 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                                    facecolors='none', edgecolors='blue', s=3, marker='^', 
                                    linewidth=0.5, label='Source Fingerprint')
     
-    # Source matched points
+    # Source matched points - 根据session ID使用不同颜色的五角星
     source_matched_scatter = None
+    source_session_scatters = {}  # 存储不同session的散点图对象
     if 'matchedPoints' in source_data and source_data['matchedPoints']:
-        source_matched_scatter = ax1.scatter([point[1] for point in source_data['matchedPoints']], 
-                                           [point[0] for point in source_data['matchedPoints']], 
-                                           color='red', s=150, alpha=1.0, marker='*', 
-                                           edgecolors='black', linewidth=2,
-                                           label='Source Matches')
+        print(f"绘制源数据匹配点: {len(source_data['matchedPoints'])} 个")
+        
+        # 如果有session信息，按session分组绘制
+        if len(source_data['matchedPoints'][0]) > 3:  # 检查是否有session ID
+            # 按session ID分组
+            session_points = {}
+            for point in source_data['matchedPoints']:
+                session_id = point[3] if len(point) > 3 else 0
+                if session_id not in session_points:
+                    session_points[session_id] = []
+                session_points[session_id].append(point)
+            
+            # 为每个session使用不同的颜色，所有都用五角星标记
+            session_colors = ['red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+            
+            for i, (session_id, points) in enumerate(session_points.items()):
+                color = session_colors[i % len(session_colors)]
+                
+                # 绘制五角星标记的匹配点
+                scatter = ax1.scatter([point[1] for point in points], 
+                                    [point[0] for point in points], 
+                                    color=color, s=150, alpha=1.0, marker='*',  # 统一使用五角星
+                                    edgecolors='black', linewidth=2,
+                                    label=f'Source Session {session_id}')
+                source_session_scatters[session_id] = scatter
+                
+                print(f"源数据Session {session_id}: {len(points)} 个匹配点，颜色: {color}")
+        else:
+            # 没有session信息，使用单一颜色的五角星
+            source_matched_scatter = ax1.scatter([point[1] for point in source_data['matchedPoints']], 
+                                               [point[0] for point in source_data['matchedPoints']], 
+                                               color='red', s=150, alpha=1.0, marker='*',  # 统一使用五角星
+                                               edgecolors='black', linewidth=2,
+                                               label='Source Matches')
     
     ax1.set_title(f"Source: {source_data['title']}")
     ax1.set_xlabel('Time (s)')
@@ -1654,14 +1647,45 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                                   facecolors='none', edgecolors='blue', s=3, marker='^', 
                                   linewidth=0.5, label='Query Fingerprint')
     
-    # Query matched points
+    # Query matched points - 根据session ID使用不同颜色的五角星
     query_matched_scatter = None
+    query_session_scatters = {}  # 存储不同session的散点图对象
     if 'matchedPoints' in query_data and query_data['matchedPoints']:
-        query_matched_scatter = ax2.scatter([point[1] for point in query_data['matchedPoints']], 
-                                          [point[0] for point in query_data['matchedPoints']], 
-                                          color='red', s=150, alpha=1.0, marker='*', 
-                                          edgecolors='black', linewidth=2,
-                                          label='Query Matches')
+        print(f"绘制查询数据匹配点: {len(query_data['matchedPoints'])} 个")
+        
+        # 如果有session信息，按session分组绘制
+        if len(query_data['matchedPoints'][0]) > 3:  # 检查是否有session ID
+            # 按session ID分组
+            session_points = {}
+            for point in query_data['matchedPoints']:
+                session_id = point[3] if len(point) > 3 else 0
+                if session_id not in session_points:
+                    session_points[session_id] = []
+                session_points[session_id].append(point)
+            
+            # 为每个session使用不同的颜色，所有都用五角星标记（与源数据保持一致）
+            session_colors = ['red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+            
+            for i, (session_id, points) in enumerate(session_points.items()):
+                color = session_colors[i % len(session_colors)]
+                
+                match_count = len(points)
+                # 绘制五角星标记的匹配点
+                scatter = ax2.scatter([point[1] for point in points], 
+                                    [point[0] for point in points], 
+                                    color=color, s=150, alpha=1.0, marker='*',  # 统一使用五角星
+                                    edgecolors='black', linewidth=2,
+                                    label=f'Query Session {session_id}_{match_count}')
+                query_session_scatters[session_id] = scatter
+                
+                print(f"查询数据Session {session_id}: {len(points)} 个匹配点，颜色: {color}")
+        else:
+            # 没有session信息，使用单一颜色的五角星
+            query_matched_scatter = ax2.scatter([point[1] for point in query_data['matchedPoints']], 
+                                              [point[0] for point in query_data['matchedPoints']], 
+                                              color='red', s=150, alpha=1.0, marker='*',  # 统一使用五角星
+                                              edgecolors='black', linewidth=2,
+                                              label='Query Matches')
     
     ax2.set_title(f"Query: {query_data['title']}")
     ax2.set_xlabel('Time (s)')
@@ -1673,216 +1697,6 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
     # Add colorbar for query
     query_amplitude_label = "Amplitude (dB)" if query_amplitude_info['is_absolute_log_scale'] else "Amplitude"
     cbar2 = fig.colorbar(query_peaks_scatter, ax=ax2, label=query_amplitude_label, pad=0.01)
-    
-    # Add connection lines between matched points
-    connection_lines = []
-    if (source_matched_scatter and query_matched_scatter and 
-        'matchedPoints' in source_data and source_data['matchedPoints'] and
-        'matchedPoints' in query_data and query_data['matchedPoints']):
-        
-        print(f"添加匹配点连接线...")
-        print(f"源匹配点数量: {len(source_data['matchedPoints'])}")
-        print(f"查询匹配点数量: {len(query_data['matchedPoints'])}")
-        
-        # Create a dictionary to match points by hash
-        source_matches_by_hash = {}
-        for i, point in enumerate(source_data['matchedPoints']):
-            if len(point) >= 3:  # [frequency, time, hash, ...]
-                hash_val = point[2]
-                source_matches_by_hash[hash_val] = (i, point)
-        
-        query_matches_by_hash = {}
-        for i, point in enumerate(query_data['matchedPoints']):
-            if len(point) >= 3:  # [frequency, time, hash, ...]
-                hash_val = point[2]
-                query_matches_by_hash[hash_val] = (i, point)
-        
-        # Find common hashes and draw connection lines
-        common_hashes = set(source_matches_by_hash.keys()) & set(query_matches_by_hash.keys())
-        print(f"共同的hash数量: {len(common_hashes)}")
-        
-        for hash_val in common_hashes:
-            source_idx, source_point = source_matches_by_hash[hash_val]
-            query_idx, query_point = query_matches_by_hash[hash_val]
-            
-            # Source point coordinates (time, frequency)
-            source_x, source_y = source_point[1], source_point[0]
-            # Query point coordinates (time, frequency)
-            query_x, query_y = query_point[1], query_point[0]
-            
-            # Create connection line between the two subplots
-            # ConnectionPatch connects two points in different axes
-            connection = ConnectionPatch(
-                xyA=(source_x, source_y), coordsA=ax1.transData,
-                xyB=(query_x, query_y), coordsB=ax2.transData,
-                arrowstyle='-', 
-                color='lightblue', 
-                alpha=0.6, 
-                linewidth=1.5,
-                linestyle='--'
-            )
-            fig.add_artist(connection)
-            connection_lines.append(connection)
-        
-        print(f"已添加 {len(connection_lines)} 条连接线")
-        
-        # Add a legend entry for connection lines if any were created
-        if connection_lines:
-            # Add a dummy line to the legend with match count
-            ax1.plot([], [], '--', color='lightblue', alpha=0.6, linewidth=1.5, 
-                    label=f'Match Connections ({len(connection_lines)})')
-            ax1.legend()
-    
-    # Add hover functionality
-    def create_hover_annotations():
-        # Source annotation
-        source_annot = ax1.annotate("", xy=(0, 0), xytext=(20, 20),
-                                   textcoords="offset points",
-                                   bbox=dict(boxstyle="round", fc="w"),
-                                   arrowprops=dict(arrowstyle="->"))
-        source_annot.set_visible(False)
-        
-        # Query annotation
-        query_annot = ax2.annotate("", xy=(0, 0), xytext=(20, 20),
-                                  textcoords="offset points",
-                                  bbox=dict(boxstyle="round", fc="w"),
-                                  arrowprops=dict(arrowstyle="->"))
-        query_annot.set_visible(False)
-        
-        def count_nearby_matches(target_point, matched_points, tolerance=0.01):
-            """
-            计算在目标点附近的匹配点数量
-            tolerance: 位置容差（秒和Hz），用于判断点是否在相同位置
-            """
-            if not matched_points:
-                return 0
-                
-            target_freq, target_time = target_point[0], target_point[1]
-            count = 0
-            
-            for point in matched_points:
-                point_freq, point_time = point[0], point[1]
-                # 计算时间和频率的差距
-                time_diff = abs(point_time - target_time)
-                freq_diff = abs(point_freq - target_freq)
-                
-                # 如果在容差范围内，认为是在相同位置
-                if time_diff <= tolerance and freq_diff <= (tolerance * 100):  # 频率容差更大
-                    count += 1
-                    
-            return count
-        
-        def update_source_annot(ind, scatter_obj, point_type):
-            index = ind["ind"][0]
-            if scatter_obj == source_peaks_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                source_annot.xy = pos
-                original_amp = source_amplitude_info['original_amplitudes'][index]
-                text = f"Source Peak\nFreq: {source_data['allPeaks'][index][0]} Hz\nTime: {source_data['allPeaks'][index][1]:.2f} s\nAmplitude: {original_amp:{source_amplitude_info['amplitude_format']}}"
-                if source_amplitude_info['is_absolute_log_scale']:
-                    text += " dB"
-            elif scatter_obj == source_fp_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                source_annot.xy = pos
-                point = source_data['fingerprintPoints'][index]
-                text = f"Source Fingerprint\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
-            elif source_matched_scatter and scatter_obj == source_matched_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                source_annot.xy = pos
-                point = source_data['matchedPoints'][index]
-                
-                # 计算在相同位置的匹配点数量
-                matches_at_location = count_nearby_matches(point, source_data['matchedPoints'])
-                
-                text = f"Source Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {point[3] if len(point) > 3 else 'N/A'}\nMatches at location: {matches_at_location}"
-                
-            source_annot.set_text(text)
-            source_annot.get_bbox_patch().set_alpha(0.9)
-        
-        def update_query_annot(ind, scatter_obj, point_type):
-            index = ind["ind"][0]
-            if scatter_obj == query_peaks_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                query_annot.xy = pos
-                original_amp = query_amplitude_info['original_amplitudes'][index]
-                text = f"Query Peak\nFreq: {query_data['allPeaks'][index][0]} Hz\nTime: {query_data['allPeaks'][index][1]:.2f} s\nAmplitude: {original_amp:{query_amplitude_info['amplitude_format']}}"
-                if query_amplitude_info['is_absolute_log_scale']:
-                    text += " dB"
-            elif scatter_obj == query_fp_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                query_annot.xy = pos
-                point = query_data['fingerprintPoints'][index]
-                text = f"Query Fingerprint\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
-            elif query_matched_scatter and scatter_obj == query_matched_scatter:
-                pos = scatter_obj.get_offsets()[index]
-                query_annot.xy = pos
-                point = query_data['matchedPoints'][index]
-                
-                # 计算在相同位置的匹配点数量
-                matches_at_location = count_nearby_matches(point, query_data['matchedPoints'])
-                
-                text = f"Query Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {point[3] if len(point) > 3 else 'N/A'}\nMatches at location: {matches_at_location}"
-                
-            query_annot.set_text(text)
-            query_annot.get_bbox_patch().set_alpha(0.9)
-        
-        def hover(event):
-            source_vis = source_annot.get_visible()
-            query_vis = query_annot.get_visible()
-            
-            if event.inaxes == ax1:
-                # Check source scatters
-                for scatter_obj, point_type in [(source_peaks_scatter, "peak"), 
-                                               (source_fp_scatter, "fingerprint")]:
-                    cont, ind = scatter_obj.contains(event)
-                    if cont:
-                        update_source_annot(ind, scatter_obj, point_type)
-                        source_annot.set_visible(True)
-                        fig.canvas.draw_idle()
-                        return
-                
-                # Check source matched points
-                if source_matched_scatter:
-                    cont, ind = source_matched_scatter.contains(event)
-                    if cont:
-                        update_source_annot(ind, source_matched_scatter, "match")
-                        source_annot.set_visible(True)
-                        fig.canvas.draw_idle()
-                        return
-                
-                if source_vis:
-                    source_annot.set_visible(False)
-                    fig.canvas.draw_idle()
-                    
-            elif event.inaxes == ax2:
-                # Check query scatters
-                for scatter_obj, point_type in [(query_peaks_scatter, "peak"), 
-                                               (query_fp_scatter, "fingerprint")]:
-                    cont, ind = scatter_obj.contains(event)
-                    if cont:
-                        update_query_annot(ind, scatter_obj, point_type)
-                        query_annot.set_visible(True)
-                        fig.canvas.draw_idle()
-                        return
-                
-                # Check query matched points
-                if query_matched_scatter:
-                    cont, ind = query_matched_scatter.contains(event)
-                    if cont:
-                        update_query_annot(ind, query_matched_scatter, "match")
-                        query_annot.set_visible(True)
-                        fig.canvas.draw_idle()
-                        return
-                
-                if query_vis:
-                    query_annot.set_visible(False)
-                    fig.canvas.draw_idle()
-        
-        return hover
-    
-    # Setup hover functionality
-    hover_func = create_hover_annotations()
-    fig.canvas.mpl_connect("motion_notify_event", hover_func)
     
     # 计算源数据和查询数据中峰值的最大时间
     source_max_time = 0
@@ -1919,22 +1733,6 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
     print(f"源数据中的最大时间: {source_max_time:.2f}s")
     print(f"查询数据中的最大时间: {query_max_time:.2f}s")
 
-    def on_key_comparison(event):
-        """比较模式下的键盘事件处理"""
-        if event.key == 'escape':
-            print("ESC键被按下 - 关闭窗口")
-            plt.close(fig)
-        elif event.key == 'r':
-            print("R键被按下 - 重置视图")
-            ax1.relim()
-            ax1.autoscale_view()
-            ax2.relim()
-            ax2.autoscale_view()
-            fig.canvas.draw_idle()
-
-    # 添加键盘事件处理
-    cid_key = fig.canvas.mpl_connect('key_press_event', on_key_comparison)
-    
     # 如果有音频播放器，添加音频控制
     if has_any_audio:
         print("\n===== 添加音频播放控制 =====")
@@ -1945,40 +1743,197 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
         controls_ax.set_xticks([])
         controls_ax.set_yticks([])
         
+        # 计算统一的横轴最大值：取两个音频时长的较大者，并与数据最大时间比较
+        unified_max_time = 0
+        
+        # 收集所有相关的时间值
+        time_candidates = [source_max_time, query_max_time]
+        
+        if source_audio_player and source_audio_player.data is not None:
+            time_candidates.append(source_audio_player.duration)
+            print(f"源音频时长: {source_audio_player.duration:.2f}s")
+        
+        if query_audio_player and query_audio_player.data is not None:
+            time_candidates.append(query_audio_player.duration)
+            print(f"查询音频时长: {query_audio_player.duration:.2f}s")
+        
+        # 取所有时间值中的最大值作为统一的横轴范围
+        unified_max_time = max(time_candidates)
+        print(f"统一横轴最大值: {unified_max_time:.2f}s (候选值: {[f'{t:.2f}s' for t in time_candidates]})")
+        
         # 使用新的相对布局系统创建音频控件
-        controls = create_audio_controls_layout(fig, controls_ax, source_audio_player, query_audio_player)
+        controls = create_audio_controls_layout(fig, controls_ax, source_audio_player, query_audio_player, unified_max_time)
         texts = create_audio_text_layout(controls_ax, source_audio_player, query_audio_player)
         
         # Add playback position lines and set axis ranges
         if source_audio_player and source_audio_player.data is not None:
             source_audio_player.playback_line = ax1.axvline(x=0, color='orange', linestyle='-', linewidth=2)
-            # 使用数据中的最大时间和音频时长的较大值
-            source_final_max_time = max(source_max_time, source_audio_player.duration)
-            ax1.set_xlim(0, source_final_max_time)
-            print(f"设置源图横轴范围: 0 到 {source_final_max_time:.2f}s (数据最大时间: {source_max_time:.2f}s, 音频时长: {source_audio_player.duration:.2f}s)")
+            ax1.set_xlim(0, unified_max_time)
+            print(f"设置源图横轴范围: 0 到 {unified_max_time:.2f}s (统一范围)")
         else:
-            # 如果没有源音频播放器，只使用数据中的最大时间
-            ax1.set_xlim(0, source_max_time)
-            print(f"设置源图横轴范围: 0 到 {source_max_time:.2f}s (仅基于数据)")
+            # 如果没有源音频播放器，使用统一的最大时间
+            ax1.set_xlim(0, unified_max_time)
+            print(f"设置源图横轴范围: 0 到 {unified_max_time:.2f}s (统一范围，无源音频)")
         
         if query_audio_player and query_audio_player.data is not None:
             query_audio_player.playback_line = ax2.axvline(x=0, color='green', linestyle='-', linewidth=2)
-            # 使用数据中的最大时间和音频时长的较大值
-            query_final_max_time = max(query_max_time, query_audio_player.duration)
-            ax2.set_xlim(0, query_final_max_time)
-            print(f"设置查询图横轴范围: 0 到 {query_final_max_time:.2f}s (数据最大时间: {query_max_time:.2f}s, 音频时长: {query_audio_player.duration:.2f}s)")
+            ax2.set_xlim(0, unified_max_time)
+            print(f"设置查询图横轴范围: 0 到 {unified_max_time:.2f}s (统一范围)")
         else:
-            # 如果没有查询音频播放器，只使用数据中的最大时间
-            ax2.set_xlim(0, query_max_time)
-            print(f"设置查询图横轴范围: 0 到 {query_max_time:.2f}s (仅基于数据)")
+            # 如果没有查询音频播放器，使用统一的最大时间
+            ax2.set_xlim(0, unified_max_time)
+            print(f"设置查询图横轴范围: 0 到 {unified_max_time:.2f}s (统一范围，无查询音频)")
+    else:
+        # 如果没有任何音频播放器，根据数据设置横轴范围
+        print("\n===== 没有音频播放器，根据数据设置横轴范围 =====")
+        ax1.set_xlim(0, source_max_time)
+        ax2.set_xlim(0, query_max_time)
+        print(f"设置源图横轴范围: 0 到 {source_max_time:.2f}s")
+        print(f"设置查询图横轴范围: 0 到 {query_max_time:.2f}s")
+    
+    plt.tight_layout(rect=[0, 0.15, 1, 1])  # 减少底部边距，从0.226改为0.15
+    
+    # 添加hover事件处理 - 支持session匹配点
+    # 创建注释对象
+    source_annot = ax1.annotate("", xy=(0, 0), xytext=(20, 20),
+                               textcoords="offset points",
+                               bbox=dict(boxstyle="round", fc="w"),
+                               arrowprops=dict(arrowstyle="->"))
+    source_annot.set_visible(False)
+    
+    query_annot = ax2.annotate("", xy=(0, 0), xytext=(20, 20),
+                              textcoords="offset points",
+                              bbox=dict(boxstyle="round", fc="w"),
+                              arrowprops=dict(arrowstyle="->"))
+    query_annot.set_visible(False)
+    
+    def update_source_annot(ind, scatter_obj, point_type):
+        index = ind["ind"][0]
+        if scatter_obj == source_peaks_scatter:
+            pos = scatter_obj.get_offsets()[index]
+            source_annot.xy = pos
+            original_amp = source_amplitude_info['original_amplitudes'][index]
+            text = f"Source Peak\nFreq: {source_data['allPeaks'][index][0]} Hz\nTime: {source_data['allPeaks'][index][1]:.2f} s\nAmplitude: {original_amp:{source_amplitude_info['amplitude_format']}}"
+            if source_amplitude_info['is_absolute_log_scale']:
+                text += " dB"
+        elif scatter_obj == source_fp_scatter:
+            pos = scatter_obj.get_offsets()[index]
+            source_annot.xy = pos
+            point = source_data['fingerprintPoints'][index]
+            text = f"Source Fingerprint\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
+        elif scatter_obj == source_matched_scatter:
+            pos = scatter_obj.get_offsets()[index]
+            source_annot.xy = pos
+            point = source_data['matchedPoints'][index]
+            text = f"Source Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
+            if len(point) > 3:
+                text += f"\nSession: {point[3]}"
+        else:
+            # 检查是否是session散点图
+            for session_id, session_scatter in source_session_scatters.items():
+                if scatter_obj == session_scatter:
+                    pos = scatter_obj.get_offsets()[index]
+                    source_annot.xy = pos
+                    # 找到对应的匹配点
+                    session_points = [p for p in source_data['matchedPoints'] if len(p) > 3 and p[3] == session_id]
+                    if index < len(session_points):
+                        point = session_points[index]
+                        text = f"Source Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {session_id}"
+                    else:
+                        text = f"Source Session {session_id} Match"
+                    break
+        source_annot.set_text(text)
+        source_annot.get_bbox_patch().set_alpha(0.9)
+    
+    def update_query_annot(ind, scatter_obj, point_type):
+        index = ind["ind"][0]
+        if scatter_obj == query_peaks_scatter:
+            pos = scatter_obj.get_offsets()[index]
+            query_annot.xy = pos
+            original_amp = query_amplitude_info['original_amplitudes'][index]
+            text = f"Query Peak\nFreq: {query_data['allPeaks'][index][0]} Hz\nTime: {query_data['allPeaks'][index][1]:.2f} s\nAmplitude: {original_amp:{query_amplitude_info['amplitude_format']}}"
+            if query_amplitude_info['is_absolute_log_scale']:
+                text += " dB"
+        elif scatter_obj == query_fp_scatter:
+            pos = scatter_obj.get_offsets()[index]
+            query_annot.xy = pos
+            point = query_data['fingerprintPoints'][index]
+            text = f"Query Fingerprint\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}"
+        elif scatter_obj == query_matched_scatter:
+            pos = scatter_obj.get_offsets()[index]
+            query_annot.xy = pos
+            point = query_data['matchedPoints'][index]
+            text = f"Query Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {point[3] if len(point) > 3 else 'N/A'}"
+        else:
+            # 检查是否是session散点图
+            for session_id, session_scatter in query_session_scatters.items():
+                if scatter_obj == session_scatter:
+                    pos = scatter_obj.get_offsets()[index]
+                    query_annot.xy = pos
+                    # 找到对应的匹配点
+                    session_points = [p for p in query_data['matchedPoints'] if len(p) > 3 and p[3] == session_id]
+                    if index < len(session_points):
+                        point = session_points[index]
+                        text = f"Query Match\nFreq: {point[0]} Hz\nTime: {point[1]:.2f} s\nHash: {point[2]}\nSession: {session_id}"
+                    else:
+                        text = f"Query Session {session_id} Match"
+                    break
+        query_annot.set_text(text)
+        query_annot.get_bbox_patch().set_alpha(0.9)
+    
+    # 创建hover回调函数
+    def hover(event):
+        source_vis = source_annot.get_visible()
+        query_vis = query_annot.get_visible()
         
-        # 设置按钮引用
-        if source_audio_player and 'source' in controls:
-            source_audio_player.play_button = controls['source']['play_button']
-        if query_audio_player and 'query' in controls:
-            query_audio_player.play_button = controls['query']['play_button']
-        
-        # 创建源音频控制事件处理器
+        if event.inaxes == ax1:  # 源图
+            # 检查所有散点图对象
+            scatter_objects = [(source_peaks_scatter, "peak"), (source_fp_scatter, "fingerprint")]
+            if source_matched_scatter:
+                scatter_objects.append((source_matched_scatter, "match"))
+            # 添加session散点图
+            for session_id, session_scatter in source_session_scatters.items():
+                scatter_objects.append((session_scatter, f"session_{session_id}"))
+            
+            for scatter_obj, point_type in scatter_objects:
+                cont, ind = scatter_obj.contains(event)
+                if cont:
+                    update_source_annot(ind, scatter_obj, point_type)
+                    source_annot.set_visible(True)
+                    fig.canvas.draw_idle()
+                    return
+            
+            if source_vis:
+                source_annot.set_visible(False)
+                fig.canvas.draw_idle()
+                
+        elif event.inaxes == ax2:  # 查询图
+            # 检查所有散点图对象
+            scatter_objects = [(query_peaks_scatter, "peak"), (query_fp_scatter, "fingerprint")]
+            if query_matched_scatter:
+                scatter_objects.append((query_matched_scatter, "match"))
+            # 添加session散点图
+            for session_id, session_scatter in query_session_scatters.items():
+                scatter_objects.append((session_scatter, f"session_{session_id}"))
+            
+            for scatter_obj, point_type in scatter_objects:
+                cont, ind = scatter_obj.contains(event)
+                if cont:
+                    update_query_annot(ind, scatter_obj, point_type)
+                    query_annot.set_visible(True)
+                    fig.canvas.draw_idle()
+                    return
+            
+            if query_vis:
+                query_annot.set_visible(False)
+                fig.canvas.draw_idle()
+    
+    # 连接hover事件
+    fig.canvas.mpl_connect("motion_notify_event", hover)
+    
+    # 添加事件处理器（如果有音频播放器）
+    if has_any_audio:
+        # 创建音频控制事件处理器
         if source_audio_player and 'source' in controls:
             def on_source_play(event):
                 print(f"\n===== 源音频播放按钮被点击 =====")
@@ -2010,7 +1965,6 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
             controls['source']['stop_button'].on_clicked(on_source_stop)
             controls['source']['time_slider'].on_changed(on_source_slider_changed)
         
-        # 创建查询音频控制事件处理器
         if query_audio_player and 'query' in controls:
             def on_query_play(event):
                 print(f"\n===== 查询音频播放按钮被点击 =====")
@@ -2050,6 +2004,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                     if time_pos < 0:
                         time_pos = 0
                     elif time_pos > source_audio_player.duration:
+                        # 限制在源音频的实际时长内，但允许在统一横轴范围内点击
                         time_pos = source_audio_player.duration
                     
                     source_audio_player.seek(time_pos)
@@ -2061,6 +2016,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                     if time_pos < 0:
                         time_pos = 0
                     elif time_pos > query_audio_player.duration:
+                        # 限制在查询音频的实际时长内，但允许在统一横轴范围内点击
                         time_pos = query_audio_player.duration
                     
                     query_audio_player.seek(time_pos)
@@ -2079,7 +2035,7 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                 if query_audio_player.update_ui():
                     updated = True
             if updated:
-                    fig.canvas.draw_idle()
+                fig.canvas.draw_idle()
             return []
         
         # 每100ms更新一次UI
@@ -2088,13 +2044,6 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
                           blit=True, cache_frame_data=False)
         # 保存动画对象的引用，防止被垃圾回收
         fig.ani = ani
-    else:
-        # 如果没有任何音频播放器，根据数据设置横轴范围
-        print("\n===== 没有音频播放器，根据数据设置横轴范围 =====")
-        ax1.set_xlim(0, source_max_time)
-        ax2.set_xlim(0, query_max_time)
-        print(f"设置源图横轴范围: 0 到 {source_max_time:.2f}s")
-        print(f"设置查询图横轴范围: 0 到 {query_max_time:.2f}s")
     
     # 添加窗口关闭事件处理
     def on_close(event):
@@ -2107,9 +2056,81 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
             plt.close(fig)
         plt.close('all')
     
-    fig.canvas.mpl_connect('close_event', on_close)
+    # 添加键盘事件处理
+    def on_key(event):
+        if event.key == 'escape':
+            print("ESC键被按下 - 关闭窗口")
+            if source_audio_player:
+                source_audio_player.stop()
+            if query_audio_player:
+                query_audio_player.stop()
+            if plt.fignum_exists(fig.number):
+                plt.close(fig)
     
-    plt.tight_layout(rect=[0, 0.15, 1, 1])  # 减少底部边距，从0.226改为0.15
+    # 注册窗口事件
+    fig.canvas.mpl_connect('close_event', on_close)
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    
+    # 在Source和Query之间绘制匹配连线
+    if ('matchedPoints' in source_data and source_data['matchedPoints'] and 
+        'matchedPoints' in query_data and query_data['matchedPoints']):
+        
+        print(f"\n===== 绘制Source和Query之间的匹配连线 =====")
+        
+        # 按session分组匹配点
+        source_sessions = {}
+        query_sessions = {}
+        
+        # 分组源数据匹配点
+        for point in source_data['matchedPoints']:
+            session_id = point[3] if len(point) > 3 else 0
+            if session_id not in source_sessions:
+                source_sessions[session_id] = []
+            source_sessions[session_id].append(point)
+        
+        # 分组查询数据匹配点
+        for point in query_data['matchedPoints']:
+            session_id = point[3] if len(point) > 3 else 0
+            if session_id not in query_sessions:
+                query_sessions[session_id] = []
+            query_sessions[session_id].append(point)
+        
+        # 为每个session绘制Source到Query的连线
+        session_colors = ['red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+        
+        for session_id in set(source_sessions.keys()) & set(query_sessions.keys()):
+            color = session_colors[session_id % len(session_colors)]
+            source_points = source_sessions[session_id]
+            query_points = query_sessions[session_id]
+            
+            print(f"Session {session_id}: {len(source_points)} 源点, {len(query_points)} 查询点")
+            
+            # 为每个源点找到对应的查询点（基于hash匹配）
+            for source_point in source_points:
+                source_hash = source_point[2] if len(source_point) > 2 else None
+                source_time = source_point[1]
+                source_freq = source_point[0]
+                
+                # 在查询点中找到相同hash的点
+                for query_point in query_points:
+                    query_hash = query_point[2] if len(query_point) > 2 else None
+                    query_time = query_point[1]
+                    query_freq = query_point[0]
+                    
+                    # 如果hash匹配，绘制连线
+                    if source_hash == query_hash and source_hash is not None:
+                        # 创建连接两个子图的连线
+                        con = ConnectionPatch(
+                            xyA=(source_time, source_freq), coordsA=ax1.transData,
+                            xyB=(query_time, query_freq), coordsB=ax2.transData,
+                            axesA=ax1, axesB=ax2,
+                            color=color, alpha=0.6, linewidth=1.5, linestyle='-'
+                        )
+                        fig.add_artist(con)
+                        print(f"  连线: Source({source_time:.2f}s, {source_freq}Hz) -> Query({query_time:.2f}s, {query_freq}Hz)")
+                        break  # 找到匹配后跳出内层循环
+        
+        print(f"完成Source和Query之间的匹配连线绘制")
     
     return fig, (ax1, ax2)
 
