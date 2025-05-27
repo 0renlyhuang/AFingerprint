@@ -28,6 +28,7 @@ struct PeakDetectionConfig {
     size_t maxFreq;           // 最大频率 (Hz)
     double peakTimeDuration;  // 峰值检测时间窗口 (秒)
     float quantileThreshold;  // 分位数阈值 (0.0-1.0, 例如0.8表示80分位数)
+    size_t numFrequencyBands; // 频段数量 (4-6个)
 };
 
 // 指纹生成配置

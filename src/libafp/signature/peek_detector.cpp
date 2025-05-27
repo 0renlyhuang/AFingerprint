@@ -152,26 +152,20 @@ void PeekDetector::filterPeaks(std::vector<Peak>& newPeaks, int maxPeaksPerFrame
     std::cout << "[DEBUG-峰值限制] PeekDetector: 通道" << channel << "峰值总数超过限制，执行频段分配策略: " 
               << newPeaks.size() << " -> " << peakConfig.maxPeaksPerFrame << std::endl;
     
-    // 将频率范围分为4个频段
-    const float freqRange = static_cast<float>(peakConfig.maxFreq - peakConfig.minFreq);
-    const float bandWidth = freqRange / 4.0f;
+    // 生成基于对数尺度的频段边界
+    std::vector<std::pair<float, float>> frequencyBands = generateLogFrequencyBands(
+        static_cast<float>(peakConfig.minFreq), 
+        static_cast<float>(peakConfig.maxFreq), 
+        peakConfig.numFrequencyBands);
     
-    // 定义4个频段的边界
-    std::vector<std::pair<float, float>> frequencyBands = {
-        {static_cast<float>(peakConfig.minFreq), static_cast<float>(peakConfig.minFreq) + bandWidth},
-        {static_cast<float>(peakConfig.minFreq) + bandWidth, static_cast<float>(peakConfig.minFreq) + 2 * bandWidth},
-        {static_cast<float>(peakConfig.minFreq) + 2 * bandWidth, static_cast<float>(peakConfig.minFreq) + 3 * bandWidth},
-        {static_cast<float>(peakConfig.minFreq) + 3 * bandWidth, static_cast<float>(peakConfig.maxFreq)}
-    };
-    
-    std::cout << "[DEBUG-频段分配] PeekDetector: 通道" << channel << "频段划分: ";
+    std::cout << "[DEBUG-频段分配] PeekDetector: 通道" << channel << "对数尺度频段划分(" << peakConfig.numFrequencyBands << "个): ";
     for (size_t i = 0; i < frequencyBands.size(); ++i) {
         std::cout << "频段" << i+1 << "[" << frequencyBands[i].first << "-" << frequencyBands[i].second << "Hz] ";
     }
     std::cout << std::endl;
     
     // 将峰值按频段分组
-    std::vector<std::vector<Peak>> bandPeaks(4);
+    std::vector<std::vector<Peak>> bandPeaks(peakConfig.numFrequencyBands);
     for (const auto& peak : newPeaks) {
         for (size_t i = 0; i < frequencyBands.size(); ++i) {
             if (peak.frequency >= frequencyBands[i].first && peak.frequency < frequencyBands[i].second) {
@@ -188,16 +182,51 @@ void PeekDetector::filterPeaks(std::vector<Peak>& newPeaks, int maxPeaksPerFrame
     }
     std::cout << std::endl;
     
-    // 初始分配：每个频段平均分配峰值配额
-    const int baseQuotaPerBand = peakConfig.maxPeaksPerFrame / 4;
-    std::vector<int> bandQuotas(4, baseQuotaPerBand);
-    int remainingQuota = peakConfig.maxPeaksPerFrame - (baseQuotaPerBand * 4);
+    // 计算频段优先级权重
+    std::vector<float> bandWeights = calculateBandPriorityWeights(frequencyBands);
     
-    // 优化分配策略：
-    // 1. 处理空频段和峰值不足的频段，将多余配额收回
-    // 2. 将收回的配额重新分配给有更多峰值的频段
+    // 计算总权重
+    float totalWeight = 0.0f;
+    for (float weight : bandWeights) {
+        totalWeight += weight;
+    }
     
-    // 第一轮：收集各种类型的频段
+    // 根据权重分配初始配额
+    std::vector<int> bandQuotas(peakConfig.numFrequencyBands);
+    int allocatedQuota = 0;
+    
+    for (size_t i = 0; i < peakConfig.numFrequencyBands; ++i) {
+        bandQuotas[i] = static_cast<int>((bandWeights[i] / totalWeight) * peakConfig.maxPeaksPerFrame);
+        allocatedQuota += bandQuotas[i];
+    }
+    
+    // 分配剩余配额（由于整数除法可能产生的余数）
+    int remainingQuota = peakConfig.maxPeaksPerFrame - allocatedQuota;
+    
+    // 按权重降序分配剩余配额
+    std::vector<std::pair<float, size_t>> weightedBands;
+    for (size_t i = 0; i < peakConfig.numFrequencyBands; ++i) {
+        weightedBands.emplace_back(bandWeights[i], i);
+    }
+    std::sort(weightedBands.begin(), weightedBands.end(), 
+              [](const auto& a, const auto& b) { return a.first > b.first; });
+    
+    for (const auto& wb : weightedBands) {
+        if (remainingQuota <= 0) break;
+        bandQuotas[wb.second]++;
+        remainingQuota--;
+    }
+    
+    std::cout << "[DEBUG-权重分配] PeekDetector: 通道" << channel << "频段权重和初始配额: ";
+    for (size_t i = 0; i < peakConfig.numFrequencyBands; ++i) {
+        float bandCenter = (frequencyBands[i].first + frequencyBands[i].second) / 2.0f;
+        std::string priority = (bandCenter >= 300.0f && bandCenter <= 2500.0f) ? "中频" : 
+                              (bandCenter > 2500.0f) ? "高频" : "低频";
+        std::cout << "频段" << i+1 << "(" << priority << ",权重" << bandWeights[i] << ",配额" << bandQuotas[i] << ") ";
+    }
+    std::cout << std::endl;
+    
+    // 优化分配策略：处理空频段和峰值不足的频段，将多余配额收回
     std::vector<int> insufficientBands;   // 峰值数量少于配额的频段（包括空频段）
     std::vector<int> needMoreBands;       // 峰值数量超过配额的频段
     
@@ -210,7 +239,8 @@ void PeekDetector::filterPeaks(std::vector<Peak>& newPeaks, int maxPeaksPerFrame
         }
     }
     
-    // 第二轮：从峰值不足的频段收回多余配额
+    // 从峰值不足的频段收回多余配额
+    remainingQuota = 0;
     for (int band : insufficientBands) {
         int actualPeaks = static_cast<int>(bandPeaks[band].size());
         int excessQuota = bandQuotas[band] - actualPeaks;
@@ -218,7 +248,11 @@ void PeekDetector::filterPeaks(std::vector<Peak>& newPeaks, int maxPeaksPerFrame
         bandQuotas[band] = actualPeaks;  // 设置为实际峰值数量
     }
     
-    // 第三轮：将剩余配额分配给需要更多峰值的频段
+    // 按优先级将剩余配额分配给需要更多峰值的频段
+    // 优先分配给高权重（中频）频段
+    std::sort(needMoreBands.begin(), needMoreBands.end(),
+              [&](int a, int b) { return bandWeights[a] > bandWeights[b]; });
+    
     while (remainingQuota > 0 && !needMoreBands.empty()) {
         bool allocated = false;
         for (int band : needMoreBands) {
@@ -307,9 +341,10 @@ std::vector<Peak> PeekDetector::extractPeaksFromFFTResults(
     // 计算当前窗口中所有magnitude的分位数作为动态阈值
     std::vector<float> allMagnitudes;
     const auto startIdx = std::max(wndStartIdx, static_cast<int>(peakConfig.timeMaxRange));
+    const auto endIdx = std::min(wndEndIdx, static_cast<int>(fftResults.size()) - static_cast<int>(peakConfig.timeMaxRange));
     
     // 收集窗口内所有帧的幅度值
-    for (size_t frameIdx = startIdx; frameIdx < wndEndIdx; ++frameIdx) {
+    for (size_t frameIdx = startIdx; frameIdx < endIdx; ++frameIdx) {
         const auto& currentFrame = fftResults[frameIdx];
         for (size_t freqIdx = peakConfig.localMaxRange; 
              freqIdx < fftSize / 2 - peakConfig.localMaxRange; 
@@ -347,82 +382,30 @@ std::vector<Peak> PeekDetector::extractPeaksFromFFTResults(
               << "分位数: " << quantileMagnitude 
               << ", 最小峰值幅度阈值: " << peakConfig.minPeakMagnitude << std::endl;
     
-    // 在时频域上查找局部最大值
-    // 跳过开始和结束的timeMaxRange个帧，以便在时间维度上能进行完整比较
+    // 生成基于对数尺度的频段边界
+    std::vector<std::pair<float, float>> frequencyBands = generateLogFrequencyBands(
+        static_cast<float>(peakConfig.minFreq), 
+        static_cast<float>(peakConfig.maxFreq), 
+        peakConfig.numFrequencyBands);
     
-
-    // 根据wndStartIdx前面的元素数量，确定时间维度上需要跳过的元素数量
-    for (size_t frameIdx = startIdx; frameIdx < wndEndIdx; ++frameIdx) {
+    std::cout << "[DEBUG-频段划分] PeekDetector: 对数尺度频段划分(" << peakConfig.numFrequencyBands << "个): ";
+    for (size_t i = 0; i < frequencyBands.size(); ++i) {
+        std::cout << "频段" << i+1 << "[" << frequencyBands[i].first << "-" << frequencyBands[i].second << "Hz] ";
+    }
+    std::cout << std::endl;
+    
+    // 在每个频段内独立检测峰值
+    for (size_t bandIdx = 0; bandIdx < frequencyBands.size(); ++bandIdx) {
+        const auto& band = frequencyBands[bandIdx];
+        std::vector<Peak> bandPeaks = extractPeaksInFrequencyBand(
+            fftResults, startIdx, endIdx, band.first, band.second, 
+            quantileMagnitude, peakConfig, fftSize);
         
-        const auto& currentFrame = fftResults[frameIdx];
+        candidatePeaks.insert(candidatePeaks.end(), bandPeaks.begin(), bandPeaks.end());
         
-        // 跳过频谱边缘的频率bin，以便在频率维度上比较
-        for (size_t freqIdx = peakConfig.localMaxRange; 
-             freqIdx < fftSize / 2 - peakConfig.localMaxRange; 
-             ++freqIdx) {
-            
-            // 检查频率范围
-            if (currentFrame.frequencies[freqIdx] < peakConfig.minFreq || 
-                currentFrame.frequencies[freqIdx] > peakConfig.maxFreq) {
-                continue;
-            }
-            
-            float currentMagnitude = currentFrame.magnitudes[freqIdx];
-            
-            // 检查双重幅度阈值：局部条件（大于分位数阈值）+ 全局兜底条件（大于最小峰值幅度）
-            if (currentMagnitude <= quantileMagnitude || currentMagnitude < peakConfig.minPeakMagnitude) {
-                continue;
-            }
-            
-            // 检查是否在频率维度上是局部最大值 (频率域峰值检测)
-            // 确保当前频率bin的幅度比其前后localMaxRange个bin的幅度都大
-            bool isFreqPeak = true;
-            for (size_t j = 1; j <= peakConfig.localMaxRange; ++j) {
-                if (currentMagnitude < currentFrame.magnitudes[freqIdx - j] || 
-                    currentMagnitude < currentFrame.magnitudes[freqIdx + j]) {
-                    isFreqPeak = false;
-                    break;
-                }
-            }
-            
-            if (!isFreqPeak) {
-                continue;
-            }
-            
-            // 改进：检查是否在时间维度上也是局部最大值 (时间域峰值检测)
-            // 确保当前帧中的该频率bin的幅度比前后timeMaxRange个帧中的相同bin幅度都大
-            bool isTimePeak = true;
-            for (size_t j = 1; j <= peakConfig.timeMaxRange; ++j) {
-                // 与前面的帧比较
-                if (currentMagnitude < fftResults[frameIdx - j].magnitudes[freqIdx]) {
-                    isTimePeak = false;
-                    break;
-                }
-                
-                // 与后面的帧比较
-                if (currentMagnitude < fftResults[frameIdx + j].magnitudes[freqIdx]) {
-                    isTimePeak = false;
-                    break;
-                }
-            }
-            
-            if (!isTimePeak) {
-                continue;
-            }
-            
-            // 满足所有条件，这是一个真正的时频域局部最大值
-            Peak peak;
-            peak.frequency = static_cast<uint32_t>(currentFrame.frequencies[freqIdx]);
-            peak.magnitude = currentMagnitude;
-            peak.timestamp = currentFrame.timestamp; // 使用当前短帧的精确时间戳
-            
-            candidatePeaks.push_back(peak);
-
-            // 添加到可视化数据（如果启用）
-            if (*collectVisualizationData_) {
-                visualizationData_->allPeaks.emplace_back(peak.frequency, peak.timestamp, peak.magnitude);
-            }
-        }
+        std::cout << "[DEBUG-频段峰值] PeekDetector: 频段" << bandIdx+1 
+                  << "[" << band.first << "-" << band.second << "Hz] 检测到 " 
+                  << bandPeaks.size() << " 个峰值" << std::endl;
     }
     
     std::cout << "[Debug] PeekDetector: 在时间窗口 " << windowStartTime << "s - " << windowEndTime 
@@ -465,6 +448,157 @@ void PeekDetector::reset() {
     peakCache_.clear();
     slidingWindowMap_.clear();
     std::cout << "[DEBUG-重置] PeekDetector: 已重置所有峰值缓存和滑动窗口状态" << std::endl;
+}
+
+// 生成基于对数尺度的频段边界
+std::vector<std::pair<float, float>> PeekDetector::generateLogFrequencyBands(float minFreq, float maxFreq, size_t numBands) {
+    std::vector<std::pair<float, float>> bands;
+    
+    if (numBands == 0 || minFreq >= maxFreq) {
+        return bands;
+    }
+    
+    // 使用对数尺度计算频段边界
+    float logMinFreq = std::log10(minFreq);
+    float logMaxFreq = std::log10(maxFreq);
+    float logStep = (logMaxFreq - logMinFreq) / numBands;
+    
+    for (size_t i = 0; i < numBands; ++i) {
+        float logStart = logMinFreq + i * logStep;
+        float logEnd = logMinFreq + (i + 1) * logStep;
+        
+        float freqStart = std::pow(10.0f, logStart);
+        float freqEnd = std::pow(10.0f, logEnd);
+        
+        bands.emplace_back(freqStart, freqEnd);
+    }
+    
+    return bands;
+}
+
+// 在指定频段内检测峰值
+std::vector<Peak> PeekDetector::extractPeaksInFrequencyBand(
+    const std::vector<FFTResult>& fftResults,
+    int startIdx, int endIdx,
+    float bandMinFreq, float bandMaxFreq,
+    float quantileMagnitude,
+    const PeakDetectionConfig& peakConfig,
+    size_t fftSize) {
+    
+    std::vector<Peak> bandPeaks;
+    
+    // 在时频域上查找局部最大值，包含首尾元素
+    for (int frameIdx = startIdx; frameIdx < endIdx; ++frameIdx) {
+        const auto& currentFrame = fftResults[frameIdx];
+        
+        // 在当前频段内查找频率bin
+        for (size_t freqIdx = 0; freqIdx < fftSize / 2; ++freqIdx) {
+            float currentFreq = currentFrame.frequencies[freqIdx];
+            
+            // 检查是否在当前频段范围内
+            if (currentFreq < bandMinFreq || currentFreq > bandMaxFreq) {
+                continue;
+            }
+            
+            float currentMagnitude = currentFrame.magnitudes[freqIdx];
+            
+            // 检查双重幅度阈值：局部条件（大于分位数阈值）+ 全局兜底条件（大于最小峰值幅度）
+            if (currentMagnitude <= quantileMagnitude || currentMagnitude < peakConfig.minPeakMagnitude) {
+                continue;
+            }
+            
+            // 检查是否在频率维度上是局部最大值 (频率域峰值检测)
+            // 确保当前频率bin的幅度比其前后localMaxRange个bin的幅度都大
+            bool isFreqPeak = true;
+            for (size_t j = 1; j <= peakConfig.localMaxRange; ++j) {
+                // 检查左边界
+                if (freqIdx >= j) {
+                    if (currentMagnitude <= currentFrame.magnitudes[freqIdx - j]) {
+                        isFreqPeak = false;
+                        break;
+                    }
+                }
+                // 检查右边界
+                if (freqIdx + j < fftSize / 2) {
+                    if (currentMagnitude <= currentFrame.magnitudes[freqIdx + j]) {
+                        isFreqPeak = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (!isFreqPeak) {
+                continue;
+            }
+            
+            // 检查是否在时间维度上也是局部最大值 (时间域峰值检测)
+            // 确保当前帧中的该频率bin的幅度比前后timeMaxRange个帧中的相同bin幅度都大
+            bool isTimePeak = true;
+            for (size_t j = 1; j <= peakConfig.timeMaxRange; ++j) {
+                // 与前面的帧比较
+                if (frameIdx >= static_cast<int>(j)) {
+                    if (currentMagnitude <= fftResults[frameIdx - j].magnitudes[freqIdx]) {
+                        isTimePeak = false;
+                        break;
+                    }
+                }
+                
+                // 与后面的帧比较
+                if (frameIdx + static_cast<int>(j) < static_cast<int>(fftResults.size())) {
+                    if (currentMagnitude <= fftResults[frameIdx + j].magnitudes[freqIdx]) {
+                        isTimePeak = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (!isTimePeak) {
+                continue;
+            }
+            
+            // 满足所有条件，这是一个真正的时频域局部最大值
+            Peak peak;
+            peak.frequency = static_cast<uint32_t>(currentFreq);
+            peak.magnitude = currentMagnitude;
+            peak.timestamp = currentFrame.timestamp; // 使用当前短帧的精确时间戳
+            
+            bandPeaks.push_back(peak);
+
+            // 添加到可视化数据（如果启用）
+            if (*collectVisualizationData_) {
+                visualizationData_->allPeaks.emplace_back(peak.frequency, peak.timestamp, peak.magnitude);
+            }
+        }
+    }
+    
+    return bandPeaks;
+}
+
+// 计算频段优先级权重
+std::vector<float> PeekDetector::calculateBandPriorityWeights(const std::vector<std::pair<float, float>>& frequencyBands) {
+    std::vector<float> weights(frequencyBands.size(), 1.0f);
+    
+    // 定义重点频率范围：150-2500Hz (中频)
+    const float priorityMinFreq = 150.0f;
+    const float priorityMaxFreq = 2500.0f;
+    
+    for (size_t i = 0; i < frequencyBands.size(); ++i) {
+        const auto& band = frequencyBands[i];
+        float bandCenter = (band.first + band.second) / 2.0f;
+        
+        if (bandCenter >= priorityMinFreq && bandCenter <= priorityMaxFreq) {
+            // 中频段：最高优先级
+            weights[i] = 3.0f;
+        } else if (bandCenter > priorityMaxFreq) {
+            // 高频段：中等优先级
+            weights[i] = 2.0f;
+        } else {
+            // 低频段：最低优先级
+            weights[i] = 1.0f;
+        }
+    }
+    
+    return weights;
 }
 
 } // namespace afp

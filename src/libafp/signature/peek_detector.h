@@ -49,6 +49,21 @@ private:
 
     void filterPeaks(std::vector<Peak>& peaks, int maxPeaksPerFrame, uint32_t channel, const PeakDetectionConfig& peakConfig);
 
+    // 生成基于对数尺度的频段边界
+    std::vector<std::pair<float, float>> generateLogFrequencyBands(float minFreq, float maxFreq, size_t numBands);
+    
+    // 在指定频段内检测峰值
+    std::vector<Peak> extractPeaksInFrequencyBand(
+        const std::vector<FFTResult>& fftResults,
+        int startIdx, int endIdx,
+        float bandMinFreq, float bandMaxFreq,
+        float quantileMagnitude,
+        const PeakDetectionConfig& peakConfig,
+        size_t fftSize);
+    
+    // 计算频段优先级权重
+    std::vector<float> calculateBandPriorityWeights(const std::vector<std::pair<float, float>>& frequencyBands);
+
 private:
     std::shared_ptr<IPerformanceConfig> config_;
     std::map<uint32_t, std::vector<Peak>> peakCache_;

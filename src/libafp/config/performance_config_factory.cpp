@@ -24,14 +24,15 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->fftConfig_.hopSize = 441;     // 0.1秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
-    config->peakDetectionConfig_.localMaxRange = 10;        // 较小的本地最大值范围
+    config->peakDetectionConfig_.localMaxRange = 5;        // 较小的本地最大值范围
     config->peakDetectionConfig_.timeMaxRange = 4;         // 默认为1，只与相邻帧比较
-    config->peakDetectionConfig_.maxPeaksPerFrame = 7;     // 每帧最多7个峰值
+    config->peakDetectionConfig_.maxPeaksPerFrame = 10;     // 每帧最多7个峰值
     config->peakDetectionConfig_.minPeakMagnitude = 25.0f;  // 提高阈值到45dB，有效过滤噪声
-    config->peakDetectionConfig_.minFreq = 300;            // 最小频率
+    config->peakDetectionConfig_.minFreq = 40;            // 最小频率
     config->peakDetectionConfig_.maxFreq = 5000;           // 最大频率
     config->peakDetectionConfig_.peakTimeDuration = 0.1;   // 移动端使用较小的峰值检测窗口
     config->peakDetectionConfig_.quantileThreshold = 0.75f; // 移动端使用75分位数，平衡性能和准确性
+    config->peakDetectionConfig_.numFrequencyBands = 6;    // 移动端使用4个频段，平衡性能和准确性
     
     // 指纹生成配置 - 针对三帧组合哈希优化
     config->signatureGenerationConfig_.minFreqDelta = 60;   // 最小频率差，增加区分度
@@ -41,10 +42,10 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     
     // 匹配配置 - 移动端使用较严格的参数以减少内存使用
     config->matchingConfig_.maxCandidates = 20;            // 较少的候选结果
-    config->matchingConfig_.matchExpireTime = 5.0;         // 较短的过期时间
+    config->matchingConfig_.matchExpireTime = 60.0;         // 较短的过期时间
     config->matchingConfig_.minConfidenceThreshold = 0.5;  // 较高的置信度阈值
     config->matchingConfig_.minMatchesRequired = 5;       // 减少最小匹配点数要求
-    config->matchingConfig_.offsetTolerance = 1.0;        // 较大的时间偏移容忍度
+    config->matchingConfig_.offsetTolerance = 1.5;        // 较大的时间偏移容忍度
     
     return config;
 }
@@ -65,6 +66,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createDesktopConfi
     config->peakDetectionConfig_.maxFreq = 5500;           // 最大频率
     config->peakDetectionConfig_.peakTimeDuration = 0.25;  // PC端使用中等峰值检测窗口
     config->peakDetectionConfig_.quantileThreshold = 0.8f;  // 桌面端使用80分位数，提高峰值质量
+    config->peakDetectionConfig_.numFrequencyBands = 5;    // 桌面端使用5个频段，提高精度
     
     // 指纹生成配置 - PC端使用中等参数
     config->signatureGenerationConfig_.minFreqDelta = 70;   // 中等最小频率差，增强区分度
@@ -98,6 +100,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createServerConfig
     config->peakDetectionConfig_.maxFreq = 6000;           // 最大频率
     config->peakDetectionConfig_.peakTimeDuration = 0.3;   // 服务器端使用较大的峰值检测窗口
     config->peakDetectionConfig_.quantileThreshold = 0.85f; // 服务器端使用85分位数，最高峰值质量
+    config->peakDetectionConfig_.numFrequencyBands = 6;    // 服务器端使用6个频段，最高精度
     
     // 指纹生成配置 - 服务器端使用较严格的参数
     config->signatureGenerationConfig_.minFreqDelta = 80;   // 较大的最小频率差，更高的区分度

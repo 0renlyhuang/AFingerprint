@@ -220,6 +220,7 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
                 // 计算要保留的样本数（帧重叠部分）
                 size_t samplesToKeep = samplesPerShortFrame_ - hopSize_;
                 
+                // Todo: channelBuffer可以使用环型Buffer，减少内存拷贝
                 // 将数据后移到缓冲区前部，实现重叠
                 if (samplesToKeep > 0) {
                     std::memmove(channelBuffer.samples.data(), 
