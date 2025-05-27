@@ -127,9 +127,21 @@ void PeekDetector::detectPeaksInSlidingWindow(uint32_t channel, const std::vecto
         }
         std::cout << std::endl;
 
+        // 动态计算峰值数量阈值
+        std::vector<std::pair<float, float>> frequencyBands = generateLogFrequencyBands(
+            static_cast<float>(peakConfig.minFreq), 
+            static_cast<float>(peakConfig.maxFreq), 
+            peakConfig.numFrequencyBands);
+        
+        int dynamicPeakCount = calculateDynamicPeakCount(fftResults, wndStartIdx, wndEndIdx, frequencyBands, channel);
+        
+        std::cout << "[DEBUG-动态分配] PeekDetector: 通道" << channel << "动态计算峰值数量阈值: " 
+                  << dynamicPeakCount << " (范围: " << peakConfig.minPeaksPerFrame 
+                  << "-" << peakConfig.maxPeaksPerFrameLimit << ")" << std::endl;
+
         // uniquePeaks限制峰值缓存的数量，保留最强的峰值
-        if (newPeaks.size() > peakConfig.maxPeaksPerFrame) {
-            this->filterPeaks(newPeaks, peakConfig.maxPeaksPerFrame, channel, peakConfig);
+        if (static_cast<int>(newPeaks.size()) > dynamicPeakCount) {
+            this->filterPeaks(newPeaks, dynamicPeakCount, channel, peakConfig);
         }
 
         // 确保通道有峰值缓存
@@ -150,7 +162,7 @@ void PeekDetector::detectPeaksInSlidingWindow(uint32_t channel, const std::vecto
 
 void PeekDetector::filterPeaks(std::vector<Peak>& newPeaks, int maxPeaksPerFrame, uint32_t channel, const PeakDetectionConfig& peakConfig) {
     std::cout << "[DEBUG-峰值限制] PeekDetector: 通道" << channel << "峰值总数超过限制，执行频段分配策略: " 
-              << newPeaks.size() << " -> " << peakConfig.maxPeaksPerFrame << std::endl;
+              << newPeaks.size() << " -> " << maxPeaksPerFrame << std::endl;
     
     // 生成基于对数尺度的频段边界
     std::vector<std::pair<float, float>> frequencyBands = generateLogFrequencyBands(
@@ -196,12 +208,12 @@ void PeekDetector::filterPeaks(std::vector<Peak>& newPeaks, int maxPeaksPerFrame
     int allocatedQuota = 0;
     
     for (size_t i = 0; i < peakConfig.numFrequencyBands; ++i) {
-        bandQuotas[i] = static_cast<int>((bandWeights[i] / totalWeight) * peakConfig.maxPeaksPerFrame);
+        bandQuotas[i] = static_cast<int>((bandWeights[i] / totalWeight) * maxPeaksPerFrame);
         allocatedQuota += bandQuotas[i];
     }
     
     // 分配剩余配额（由于整数除法可能产生的余数）
-    int remainingQuota = peakConfig.maxPeaksPerFrame - allocatedQuota;
+    int remainingQuota = maxPeaksPerFrame - allocatedQuota;
     
     // 按权重降序分配剩余配额
     std::vector<std::pair<float, size_t>> weightedBands;
@@ -599,6 +611,275 @@ std::vector<float> PeekDetector::calculateBandPriorityWeights(const std::vector<
     }
     
     return weights;
+}
+
+int PeekDetector::calculateDynamicPeakCount(const std::vector<FFTResult>& fftResults, int wndStartIdx, int wndEndIdx, const std::vector<std::pair<float, float>>& frequencyBands, uint32_t channel) {
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    const size_t fftSize = config_->getFFTConfig().fftSize;
+    
+    // 计算频段能量
+    std::vector<float> bandEnergies = calculateBandEnergies(fftResults, wndStartIdx, wndEndIdx, frequencyBands, fftSize);
+    
+    // 估计频段噪声水平
+    std::vector<float> bandNoiseLevel = estimateBandNoiseLevel(fftResults, wndStartIdx, wndEndIdx, frequencyBands, channel, fftSize);
+    
+    // 更新噪声历史记录
+    double currentTimestamp = fftResults[wndEndIdx - 1].timestamp;
+    updateNoiseHistory(channel, bandNoiseLevel, currentTimestamp);
+    
+    // 计算频段信噪比
+    std::vector<float> bandSNR = calculateBandSNR(bandEnergies, bandNoiseLevel);
+    
+    // 计算总能量和平均信噪比
+    float totalEnergy = 0.0f;
+    float totalSNR = 0.0f;
+    int validBands = 0;
+    
+    for (size_t i = 0; i < bandEnergies.size(); ++i) {
+        totalEnergy += bandEnergies[i];
+        if (bandSNR[i] > 0.0f) {  // 只计算有效的信噪比
+            totalSNR += bandSNR[i];
+            validBands++;
+        }
+    }
+    
+    float avgSNR = validBands > 0 ? totalSNR / validBands : 0.0f;
+    
+    std::cout << "[DEBUG-能量分析] PeekDetector: 通道" << channel 
+              << " 总能量: " << totalEnergy 
+              << ", 平均信噪比: " << avgSNR << "dB" << std::endl;
+    
+    // 基于能量和信噪比动态计算峰值数量
+    // 能量因子：能量越高，允许更多峰值
+    float energyFactor = std::min(1.0f, totalEnergy / 1000.0f);  // 假设1000为参考能量
+    
+    // 信噪比因子：信噪比越高，允许更多峰值
+    float snrFactor = std::min(1.0f, std::max(0.0f, (avgSNR - peakConfig.snrThreshold) / 20.0f));
+    
+    // 综合权重计算
+    float combinedFactor = peakConfig.energyWeightFactor * energyFactor + 
+                          peakConfig.snrWeightFactor * snrFactor;
+    
+    // 计算动态峰值数量
+    int dynamicCount = static_cast<int>(
+        peakConfig.minPeaksPerFrame + 
+        combinedFactor * (peakConfig.maxPeaksPerFrameLimit - peakConfig.minPeaksPerFrame)
+    );
+    
+    // 确保在合理范围内
+    const auto originalDynamicCount = dynamicCount;
+    dynamicCount = std::max(static_cast<int>(peakConfig.minPeaksPerFrame), 
+                           std::min(dynamicCount, static_cast<int>(peakConfig.maxPeaksPerFrameLimit)));
+    
+    std::cout << "[DEBUG-动态计算] PeekDetector: 通道" << channel 
+              << " 能量因子: " << energyFactor 
+              << ", 信噪比因子: " << snrFactor 
+              << ", 综合因子: " << combinedFactor 
+              << ", 原始动态峰值数量: " << originalDynamicCount
+              << ", 动态峰值数量: " << dynamicCount << std::endl;
+    
+    return dynamicCount;
+}
+
+// 计算频段能量
+std::vector<float> PeekDetector::calculateBandEnergies(
+    const std::vector<FFTResult>& fftResults,
+    int wndStartIdx, int wndEndIdx,
+    const std::vector<std::pair<float, float>>& frequencyBands,
+    size_t fftSize) {
+    
+    std::vector<float> bandEnergies(frequencyBands.size(), 0.0f);
+    
+    for (int frameIdx = wndStartIdx; frameIdx < wndEndIdx; ++frameIdx) {
+        const auto& currentFrame = fftResults[frameIdx];
+        
+        for (size_t freqIdx = 0; freqIdx < fftSize / 2; ++freqIdx) {
+            float currentFreq = currentFrame.frequencies[freqIdx];
+            float magnitude = currentFrame.magnitudes[freqIdx];
+            
+            // 找到对应的频段
+            for (size_t bandIdx = 0; bandIdx < frequencyBands.size(); ++bandIdx) {
+                if (currentFreq >= frequencyBands[bandIdx].first && 
+                    currentFreq < frequencyBands[bandIdx].second) {
+                    bandEnergies[bandIdx] += magnitude * magnitude;  // 能量 = 幅度平方
+                    break;
+                }
+            }
+        }
+    }
+    
+    // 归一化能量（除以帧数）
+    int frameCount = wndEndIdx - wndStartIdx;
+    if (frameCount > 0) {
+        for (float& energy : bandEnergies) {
+            energy /= frameCount;
+        }
+    }
+    
+    return bandEnergies;
+}
+
+// 估计频段噪声水平
+std::vector<float> PeekDetector::estimateBandNoiseLevel(
+    const std::vector<FFTResult>& fftResults,
+    int wndStartIdx, int wndEndIdx,
+    const std::vector<std::pair<float, float>>& frequencyBands,
+    uint32_t channel,
+    size_t fftSize) {
+    
+    std::vector<float> bandNoiseLevel(frequencyBands.size(), 0.0f);
+    
+    // 收集当前窗口每个频段的幅度值
+    std::vector<std::vector<float>> currentBandMagnitudes(frequencyBands.size());
+    
+    for (int frameIdx = wndStartIdx; frameIdx < wndEndIdx; ++frameIdx) {
+        const auto& currentFrame = fftResults[frameIdx];
+        
+        for (size_t freqIdx = 0; freqIdx < fftSize / 2; ++freqIdx) {
+            float currentFreq = currentFrame.frequencies[freqIdx];
+            float magnitude = currentFrame.magnitudes[freqIdx];
+            
+            // 找到对应的频段
+            for (size_t bandIdx = 0; bandIdx < frequencyBands.size(); ++bandIdx) {
+                if (currentFreq >= frequencyBands[bandIdx].first && 
+                    currentFreq < frequencyBands[bandIdx].second) {
+                    currentBandMagnitudes[bandIdx].push_back(magnitude);
+                    break;
+                }
+            }
+        }
+    }
+    
+    // 计算当前窗口的噪声估计（使用25分位数）
+    std::vector<float> currentNoiseLevel(frequencyBands.size(), 0.0f);
+    for (size_t bandIdx = 0; bandIdx < frequencyBands.size(); ++bandIdx) {
+        if (!currentBandMagnitudes[bandIdx].empty()) {
+            std::sort(currentBandMagnitudes[bandIdx].begin(), currentBandMagnitudes[bandIdx].end());
+            size_t n = currentBandMagnitudes[bandIdx].size();
+            size_t noiseIndex = n / 4;  // 25分位数
+            currentNoiseLevel[bandIdx] = currentBandMagnitudes[bandIdx][noiseIndex];
+        }
+    }
+    
+    // 如果有历史噪声数据，结合历史数据进行更准确的估计
+    if (noiseHistory_.find(channel) != noiseHistory_.end() && !noiseHistory_[channel].empty()) {
+        const auto& history = noiseHistory_[channel];
+        const auto& peakConfig = config_->getPeakDetectionConfig();
+        double currentTime = fftResults[wndEndIdx - 1].timestamp;
+        
+        std::cout << "[DEBUG-噪声估计] PeekDetector: 通道" << channel 
+                  << "使用" << history.size() << "个历史噪声记录进行估计" << std::endl;
+        
+        // 收集有效的历史噪声数据
+        std::vector<std::vector<float>> historicalNoise(frequencyBands.size());
+        
+        for (const auto& entry : history) {
+            // 只使用时间窗口内的历史数据
+            if (currentTime - entry.timestamp <= peakConfig.noiseEstimationWindow) {
+                for (size_t bandIdx = 0; bandIdx < frequencyBands.size() && bandIdx < entry.bandNoiseLevel.size(); ++bandIdx) {
+                    if (entry.bandNoiseLevel[bandIdx] > 0.0f) {
+                        historicalNoise[bandIdx].push_back(entry.bandNoiseLevel[bandIdx]);
+                    }
+                }
+            }
+        }
+        
+        // 结合当前和历史数据计算最终噪声水平
+        for (size_t bandIdx = 0; bandIdx < frequencyBands.size(); ++bandIdx) {
+            if (!historicalNoise[bandIdx].empty()) {
+                // 计算历史噪声的中位数
+                std::sort(historicalNoise[bandIdx].begin(), historicalNoise[bandIdx].end());
+                size_t n = historicalNoise[bandIdx].size();
+                float historicalMedian = historicalNoise[bandIdx][n / 2];
+                
+                // 加权平均：70%历史数据 + 30%当前数据
+                float historicalWeight = 0.7f;
+                float currentWeight = 0.3f;
+                
+                if (currentNoiseLevel[bandIdx] > 0.0f) {
+                    bandNoiseLevel[bandIdx] = historicalWeight * historicalMedian + 
+                                            currentWeight * currentNoiseLevel[bandIdx];
+                } else {
+                    bandNoiseLevel[bandIdx] = historicalMedian;
+                }
+                
+                std::cout << "[DEBUG-噪声融合] PeekDetector: 频段" << bandIdx+1 
+                          << " 历史中位数: " << historicalMedian 
+                          << ", 当前估计: " << currentNoiseLevel[bandIdx]
+                          << ", 融合结果: " << bandNoiseLevel[bandIdx] << std::endl;
+            } else {
+                // 没有历史数据，使用当前估计
+                bandNoiseLevel[bandIdx] = currentNoiseLevel[bandIdx];
+            }
+        }
+    } else {
+        // 没有历史数据，直接使用当前估计
+        bandNoiseLevel = currentNoiseLevel;
+        std::cout << "[DEBUG-噪声估计] PeekDetector: 通道" << channel 
+                  << "没有历史噪声数据，使用当前窗口估计" << std::endl;
+    }
+    
+    return bandNoiseLevel;
+}
+
+// 计算频段信噪比
+std::vector<float> PeekDetector::calculateBandSNR(
+    const std::vector<float>& bandEnergies,
+    const std::vector<float>& bandNoiseLevel) {
+    
+    std::vector<float> bandSNR(bandEnergies.size(), 0.0f);
+    
+    for (size_t i = 0; i < bandEnergies.size(); ++i) {
+        if (bandNoiseLevel[i] > 0.0f) {
+            float signalPower = bandEnergies[i];
+            float noisePower = bandNoiseLevel[i] * bandNoiseLevel[i];
+            
+            if (noisePower > 0.0f) {
+                // 计算信噪比（dB）
+                bandSNR[i] = 10.0f * std::log10(signalPower / noisePower);
+            }
+        }
+    }
+    
+    return bandSNR;
+}
+
+// 更新噪声历史记录
+void PeekDetector::updateNoiseHistory(
+    uint32_t channel,
+    const std::vector<float>& bandNoiseLevel,
+    double timestamp) {
+    
+    const auto& peakConfig = config_->getPeakDetectionConfig();
+    
+    // 确保通道存在
+    if (noiseHistory_.find(channel) == noiseHistory_.end()) {
+        noiseHistory_[channel] = std::vector<NoiseHistoryEntry>();
+    }
+    
+    // 添加新的噪声记录
+    NoiseHistoryEntry entry;
+    entry.timestamp = timestamp;
+    entry.bandNoiseLevel = bandNoiseLevel;
+    noiseHistory_[channel].push_back(entry);
+    
+    // 清理过期的噪声记录
+    double expireTime = timestamp - peakConfig.noiseEstimationWindow;
+    auto& history = noiseHistory_[channel];
+    
+    auto it = std::remove_if(history.begin(), history.end(),
+        [expireTime](const NoiseHistoryEntry& entry) {
+            return entry.timestamp < expireTime;
+        });
+    
+    if (it != history.end()) {
+        size_t removedCount = std::distance(it, history.end());
+        history.erase(it, history.end());
+        
+        std::cout << "[DEBUG-噪声历史] PeekDetector: 通道" << channel 
+                  << "清理了" << removedCount << "个过期噪声记录，剩余" 
+                  << history.size() << "个记录" << std::endl;
+    }
 }
 
 } // namespace afp

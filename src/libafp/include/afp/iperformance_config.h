@@ -29,6 +29,14 @@ struct PeakDetectionConfig {
     double peakTimeDuration;  // 峰值检测时间窗口 (秒)
     float quantileThreshold;  // 分位数阈值 (0.0-1.0, 例如0.8表示80分位数)
     size_t numFrequencyBands; // 频段数量 (4-6个)
+    
+    // 动态峰值分配配置
+    size_t minPeaksPerFrame;   // 每帧保留的最少峰值数
+    size_t maxPeaksPerFrameLimit; // 每帧保留的最多峰值数上限
+    double noiseEstimationWindow; // 噪声估计时间窗口 (秒)
+    float snrThreshold;        // 信噪比阈值，低于此值的频段会被抑制
+    float energyWeightFactor;  // 能量权重因子 (0.0-1.0)
+    float snrWeightFactor;     // 信噪比权重因子 (0.0-1.0)
 };
 
 // 指纹生成配置

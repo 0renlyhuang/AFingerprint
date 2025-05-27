@@ -64,6 +64,39 @@ private:
     // 计算频段优先级权重
     std::vector<float> calculateBandPriorityWeights(const std::vector<std::pair<float, float>>& frequencyBands);
 
+    // 动态峰值分配相关方法
+    int calculateDynamicPeakCount(
+        const std::vector<FFTResult>& fftResults,
+        int wndStartIdx, int wndEndIdx,
+        const std::vector<std::pair<float, float>>& frequencyBands,
+        uint32_t channel);
+    
+    // 计算频段能量
+    std::vector<float> calculateBandEnergies(
+        const std::vector<FFTResult>& fftResults,
+        int wndStartIdx, int wndEndIdx,
+        const std::vector<std::pair<float, float>>& frequencyBands,
+        size_t fftSize);
+    
+    // 估计频段噪声水平
+    std::vector<float> estimateBandNoiseLevel(
+        const std::vector<FFTResult>& fftResults,
+        int wndStartIdx, int wndEndIdx,
+        const std::vector<std::pair<float, float>>& frequencyBands,
+        uint32_t channel,
+        size_t fftSize);
+    
+    // 计算频段信噪比
+    std::vector<float> calculateBandSNR(
+        const std::vector<float>& bandEnergies,
+        const std::vector<float>& bandNoiseLevel);
+    
+    // 更新噪声历史记录
+    void updateNoiseHistory(
+        uint32_t channel,
+        const std::vector<float>& bandNoiseLevel,
+        double timestamp);
+
 private:
     std::shared_ptr<IPerformanceConfig> config_;
     std::map<uint32_t, std::vector<Peak>> peakCache_;
@@ -73,5 +106,12 @@ private:
 
     bool* collectVisualizationData_;
     VisualizationData* visualizationData_;
+    
+    // 噪声估计历史记录
+    struct NoiseHistoryEntry {
+        double timestamp;
+        std::vector<float> bandNoiseLevel;
+    };
+    std::map<uint32_t, std::vector<NoiseHistoryEntry>> noiseHistory_;
 };
 }
