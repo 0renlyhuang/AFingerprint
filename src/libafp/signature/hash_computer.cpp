@@ -303,7 +303,7 @@ uint32_t HashComputer::computeTripleFrameHash(
     combo2 &= 0x3FF;
     
     // 最终的哈希组合
-    uint32_t hash = ((anchorPeak.frequency & 0xFFF) << 20) | // 锚点频率 (12位) - 位置20-31
+    uint32_t hash = (( (anchorPeak.frequency / 2) & 0xFFF) << 20) | // 锚点频率 (12位) - 位置20-31
                    (combo1 << 10) |                         // 第一组组合 (10位) - 位置10-19
                    combo2;                                  // 第二组组合 (10位) - 位置0-9
 
