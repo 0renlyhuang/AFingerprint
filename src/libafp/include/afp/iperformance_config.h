@@ -44,6 +44,10 @@ struct SignatureGenerationConfig {
     size_t maxFreqDelta;      // 最大频率差 (Hz)
     double maxTimeDelta;      // 最大时间差 (秒)
     double frameDuration;     // 长帧持续时间 (秒)
+    size_t maxDoubleFrameCombinations; // 每个双帧窗口保留的最大峰值组合数
+    double minDoubleFrameScore; // 双帧峰值组合的最低评分阈值，低于此分数的组合将被丢弃
+    size_t maxTripleFrameCombinations; // 每个三帧窗口保留的最大峰值组合数
+    double minTripleFrameScore; // 三帧峰值组合的最低评分阈值，低于此分数的组合将被丢弃
 };
 
 // 匹配配置

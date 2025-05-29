@@ -289,30 +289,39 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
                 }
             };
             
-            std::unordered_set<std::pair<uint32_t, double>, PairHash> uniquePairs;
+            std::unordered_set<std::pair<uint32_t, double>, PairHash> existingPairs;
             
-            // 创建一个去重后的临时向量
+            // 首先收集所有历史指纹的(hash, timestamp)对
+            for (size_t i = 0; i < initialSignatureCount; ++i) {
+                const auto& signature = signatures_[i];
+                std::pair<uint32_t, double> key(signature.hash, signature.timestamp);
+                existingPairs.insert(key);
+            }
+            
+            // 创建一个去重后的临时向量，只包含不与历史指纹重复的新指纹
             std::vector<SignaturePoint> uniqueSignatures;
-            uniqueSignatures.reserve(signatures_.size()); // 预分配内存避免多次重新分配
+            uniqueSignatures.reserve(signatures_.size() - initialSignatureCount); // 预分配内存
             
-            // 从initialSignatureCount开始，只对新增加的签名进行去重
+            size_t duplicateCount = 0;
+            // 检查新增指纹，排除与历史指纹重复的部分
             for (size_t i = initialSignatureCount; i < signatures_.size(); ++i) {
                 const auto& signature = signatures_[i];
                 std::pair<uint32_t, double> key(signature.hash, signature.timestamp);
                 
-                // 如果这个(hash, timestamp)对尚未出现过，则添加到结果中
-                if (uniquePairs.insert(key).second) {
+                // 如果这个(hash, timestamp)对不存在于历史指纹中，则添加
+                if (existingPairs.insert(key).second) {
                     uniqueSignatures.push_back(signature);
+                } else {
+                    duplicateCount++;
                 }
             }
             
             // 替换原始signatures_向量中新增的部分
-            if (uniqueSignatures.size() < signatures_.size() - initialSignatureCount) {
+            size_t originalNewCount = signatures_.size() - initialSignatureCount;
+            if (duplicateCount > 0) {
                 signatures_.erase(signatures_.begin() + initialSignatureCount, signatures_.end());
                 signatures_.insert(signatures_.end(), uniqueSignatures.begin(), uniqueSignatures.end());
-                std::cout << "[Debug] 去重后减少了 " 
-                          << (signatures_.size() - initialSignatureCount - uniqueSignatures.size())
-                          << " 个重复指纹点" << std::endl;
+                std::cout << "[Debug] 去重后减少了 " << duplicateCount << " 个重复指纹点" << std::endl;
             }
         }
     }

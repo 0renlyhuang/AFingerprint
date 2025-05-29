@@ -34,8 +34,8 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->peakDetectionConfig_.numFrequencyBands = 6;    // 移动端使用4个频段，平衡性能和准确性
     
     // 动态峰值分配配置 - 移动端
-    config->peakDetectionConfig_.minPeaksPerFrame = 3;      // 最少保留3个峰值
-    config->peakDetectionConfig_.maxPeaksPerFrameLimit = 12; // 最多保留15个峰值
+    config->peakDetectionConfig_.minPeaksPerFrame = 5;      // 最少保留3个峰值
+    config->peakDetectionConfig_.maxPeaksPerFrameLimit = 15; // 最多保留15个峰值
     config->peakDetectionConfig_.noiseEstimationWindow = 2.0; // 2秒噪声估计窗口
     config->peakDetectionConfig_.snrThreshold = 6.0f;       // 6dB信噪比阈值
     config->peakDetectionConfig_.energyWeightFactor = 0.8f; // 能量权重60%
@@ -43,16 +43,20 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     
     // 指纹生成配置 - 针对三帧组合哈希优化
     config->signatureGenerationConfig_.minFreqDelta = 60;   // 最小频率差，增加区分度
-    config->signatureGenerationConfig_.maxFreqDelta = 3000;  // 最大频率差，避免跨度太大
-    config->signatureGenerationConfig_.maxTimeDelta = 0.3;  // 最大时间差限制为0.2秒，增强时间相关性
+    config->signatureGenerationConfig_.maxFreqDelta = 3500;  // 最大频率差，避免跨度太大
+    config->signatureGenerationConfig_.maxTimeDelta = 0.2;  // 最大时间差限制为0.2秒，增强时间相关性
     config->signatureGenerationConfig_.frameDuration = 0.08; // 移动端使用较短的长帧时长，优化性能
+    config->signatureGenerationConfig_.maxDoubleFrameCombinations = 8; // 移动端保留8个最佳组合，平衡性能和准确性
+    config->signatureGenerationConfig_.minDoubleFrameScore = 10.0; // 移动端评分阈值，过滤质量较差的组合
+    config->signatureGenerationConfig_.maxTripleFrameCombinations = 12; // 移动端保留5个最佳三帧组合，优化性能
+    config->signatureGenerationConfig_.minTripleFrameScore = 15.0; // 移动端三帧评分阈值，过滤低质量组合
     
     // 匹配配置 - 移动端使用较严格的参数以减少内存使用
     config->matchingConfig_.maxCandidates = 20;            // 较少的候选结果
-    config->matchingConfig_.matchExpireTime = 60.0;         // 较短的过期时间
+    config->matchingConfig_.matchExpireTime = 50.0;         // 较短的过期时间
     config->matchingConfig_.minConfidenceThreshold = 0.5;  // 较高的置信度阈值
     config->matchingConfig_.minMatchesRequired = 5;       // 减少最小匹配点数要求
-    config->matchingConfig_.offsetTolerance = 1.5;        // 较大的时间偏移容忍度
+    config->matchingConfig_.offsetTolerance = 0.007;        // 较大的时间偏移容忍度
     
     return config;
 }
@@ -87,6 +91,10 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createDesktopConfi
     config->signatureGenerationConfig_.maxFreqDelta = 600;  // 中等最大频率差，允许更广范围的匹配
     config->signatureGenerationConfig_.maxTimeDelta = 0.3;  // 中等最大时间差，增强时序严谨性
     config->signatureGenerationConfig_.frameDuration = 0.18; // PC端使用中等长帧时长，平衡准确率和性能
+    config->signatureGenerationConfig_.maxDoubleFrameCombinations = 15; // 桌面端保留15个最佳组合，提高准确性
+    config->signatureGenerationConfig_.minDoubleFrameScore = 12.0; // 桌面端评分阈值，平衡准确性和覆盖率
+    config->signatureGenerationConfig_.maxTripleFrameCombinations = 10; // 桌面端保留10个最佳三帧组合，平衡准确性和性能
+    config->signatureGenerationConfig_.minTripleFrameScore = 18.0; // 桌面端三帧评分阈值，平衡准确性和覆盖率
     
     // 匹配配置 - PC端使用中等参数
     config->matchingConfig_.maxCandidates = 50;            // 中等候选结果数
@@ -128,6 +136,10 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createServerConfig
     config->signatureGenerationConfig_.maxFreqDelta = 800;  // 较大的最大频率差，宽广的匹配范围
     config->signatureGenerationConfig_.maxTimeDelta = 0.4;  // 较宽松的最大时间差，减少因速度变化导致的错误
     config->signatureGenerationConfig_.frameDuration = 0.25; // 服务器端使用较长的长帧时长，优化准确率
+    config->signatureGenerationConfig_.maxDoubleFrameCombinations = 25; // 服务器端保留25个最佳组合，最高准确性
+    config->signatureGenerationConfig_.minDoubleFrameScore = 10.0; // 服务器端评分阈值，更宽松以获得更高覆盖率
+    config->signatureGenerationConfig_.maxTripleFrameCombinations = 15; // 服务器端保留15个最佳三帧组合，最高准确性
+    config->signatureGenerationConfig_.minTripleFrameScore = 12.0; // 服务器端三帧评分阈值，更宽松以获得更高覆盖率
     
     // 匹配配置 - 服务器端使用较宽松的参数
     config->matchingConfig_.maxCandidates = 100;           // 较多的候选结果

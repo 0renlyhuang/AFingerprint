@@ -186,8 +186,8 @@ private:
         std::vector<DebugMatchInfo> matchInfos;           // 匹配信息
         double lastMatchTime;               // 最后一次匹配的时间戳
         int32_t offset;                     // 时间偏移（毫秒，用于session key）
-        int32_t actualOffsetSum;             // 累积的实际时间偏移（毫秒）
-        size_t offsetCount;                 // 偏移计数，用于计算平均值
+        int64_t actualOffsetSum;             // 累积的实际时间偏移（毫秒），使用int64_t防止溢出
+        int64_t offsetCount;                 // 偏移计数，用于计算平均值
         bool isMatchCountChanged;           // 是否匹配点数量发生变化
         bool isNotified;                    // 是否已通知
     };

@@ -268,6 +268,8 @@ void SignatureMatcher::processQuerySignature(
                           << ", timestamp: " << queryPoint.timestamp 
                           << ", targetSignaturesInfo.hashTimestamp: " << targetSignaturesInfo.hashTimestamp 
                           << ", actualOffset: " << actualOffset
+                          << ", offsetCount: " << candidate.offsetCount 
+                          << ", averageOffset: " << candidate.actualOffsetSum
                           << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
                           << ", foundCandidate: " << foundCandidate
                           << ", matchcount: " << candidate.matchCount << std::endl;
@@ -318,6 +320,8 @@ void SignatureMatcher::processQuerySignature(
                           << ", actualOffset: " << actualOffset 
                           << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
                           << ", matchcount: " << candidate.matchCount 
+                          << ", actualOffsetSum: " << candidate.actualOffsetSum
+                          << ", offsetCount: " << candidate.offsetCount
                           << ", averageOffset: " << candidate.actualOffsetSum / candidate.offsetCount << std::endl;
                 }
             }
@@ -457,8 +461,15 @@ void SignatureMatcher::mergeSimilarSessions() {
             [this](const CandidateSessionKey& a, const CandidateSessionKey& b) {
                 const auto& candidateA = session2CandidateMap_[a];
                 const auto& candidateB = session2CandidateMap_[b];
-                double avgOffsetA = candidateA.actualOffsetSum / candidateA.offsetCount;
-                double avgOffsetB = candidateB.actualOffsetSum / candidateB.offsetCount;
+                
+                // 添加安全检查，防止除零错误
+                if (candidateA.offsetCount == 0 || candidateB.offsetCount == 0) {
+                    std::cerr << "Warning: offsetCount is zero in mergeSimilarSessions!" << std::endl;
+                    return false;
+                }
+                
+                double avgOffsetA = static_cast<double>(candidateA.actualOffsetSum) / candidateA.offsetCount;
+                double avgOffsetB = static_cast<double>(candidateB.actualOffsetSum) / candidateB.offsetCount;
                 return avgOffsetA < avgOffsetB;
             });
         
@@ -472,7 +483,22 @@ void SignatureMatcher::mergeSimilarSessions() {
             }
             
             auto& primaryCandidate = session2CandidateMap_[sessionKeys[i]];
-            double primaryAvgOffset = primaryCandidate.actualOffsetSum / primaryCandidate.offsetCount;
+            
+            // 添加安全检查
+            if (primaryCandidate.offsetCount == 0) {
+                std::cerr << "Warning: Primary candidate offsetCount is zero!" << std::endl;
+                continue;
+            }
+            
+            double primaryAvgOffset = static_cast<double>(primaryCandidate.actualOffsetSum) / primaryCandidate.offsetCount;
+            
+            // 添加合理性检查：平均偏移应该在合理范围内（例如±10秒 = ±10000毫秒）
+            if (std::abs(primaryAvgOffset) > 10000.0) {
+                std::cerr << "Warning: Unreasonable primary avg offset: " << primaryAvgOffset 
+                          << " (actualOffsetSum: " << primaryCandidate.actualOffsetSum 
+                          << ", offsetCount: " << primaryCandidate.offsetCount << ")" << std::endl;
+                continue;
+            }
             
             // 查找可以与当前session合并的其他session
             for (size_t j = i + 1; j < sessionKeys.size(); ++j) {
@@ -481,14 +507,44 @@ void SignatureMatcher::mergeSimilarSessions() {
                 }
                 
                 auto& secondaryCandidate = session2CandidateMap_[sessionKeys[j]];
-                double secondaryAvgOffset = secondaryCandidate.actualOffsetSum / secondaryCandidate.offsetCount;
+                
+                // 添加安全检查
+                if (secondaryCandidate.offsetCount == 0) {
+                    std::cerr << "Warning: Secondary candidate offsetCount is zero!" << std::endl;
+                    continue;
+                }
+                
+                double secondaryAvgOffset = static_cast<double>(secondaryCandidate.actualOffsetSum) / secondaryCandidate.offsetCount;
+                
+                // 添加合理性检查
+                if (std::abs(secondaryAvgOffset) > 10000.0) {
+                    std::cerr << "Warning: Unreasonable secondary avg offset: " << secondaryAvgOffset 
+                              << " (actualOffsetSum: " << secondaryCandidate.actualOffsetSum 
+                              << ", offsetCount: " << secondaryCandidate.offsetCount << ")" << std::endl;
+                    continue;
+                }
                 
                 // 检查两个session的平均偏移是否在容错范围内
-                if (std::abs(primaryAvgOffset - secondaryAvgOffset) <= offsetTolerance_ * 1000) {
+                double offsetDifference = std::abs(primaryAvgOffset - secondaryAvgOffset);
+                double toleranceMs = offsetTolerance_ * 1000.0;
+                
+                if (offsetDifference <= toleranceMs) {
+                    // 合并session前先验证数据合理性
+                    int64_t newOffsetSum = primaryCandidate.actualOffsetSum + secondaryCandidate.actualOffsetSum;
+                    size_t newOffsetCount = primaryCandidate.offsetCount + secondaryCandidate.offsetCount;
+                    double newAvgOffset = static_cast<double>(newOffsetSum) / newOffsetCount;
+                    
+                    // 检查合并后的平均偏移是否合理
+                    if (std::abs(newAvgOffset) > 10000.0) {
+                        std::cerr << "Warning: Merged session would have unreasonable avg offset: " 
+                                  << newAvgOffset << ", skipping merge" << std::endl;
+                        continue;
+                    }
+                    
                     // 合并session
                     primaryCandidate.matchCount += secondaryCandidate.matchCount;
-                    primaryCandidate.actualOffsetSum += secondaryCandidate.actualOffsetSum;
-                    primaryCandidate.offsetCount += secondaryCandidate.offsetCount;
+                    primaryCandidate.actualOffsetSum = newOffsetSum;
+                    primaryCandidate.offsetCount = newOffsetCount;
                     
                     // 合并匹配信息
                     primaryCandidate.matchInfos.insert(
@@ -509,15 +565,12 @@ void SignatureMatcher::mergeSimilarSessions() {
                     sessionsToRemove.push_back(sessionKeys[j]);
                     
                     std::cout << "Merged sessions: primary avg offset = " << primaryAvgOffset 
-                              << ", secondary avg offset = " << secondaryAvgOffset 
-                              << ", new match count = " << primaryCandidate.matchCount << std::endl;
+                              << "ms, secondary avg offset = " << secondaryAvgOffset 
+                              << "ms, new avg offset = " << newAvgOffset
+                              << "ms, new match count = " << primaryCandidate.matchCount 
+                              << ", tolerance = " << toleranceMs << "ms" << std::endl;
                 }
             }
-            
-            // 更新primary session的平均偏移到session key中（用于后续处理）
-            double newAvgOffset = primaryCandidate.actualOffsetSum / primaryCandidate.offsetCount;
-            // 注意：这里不更新session key的offset，因为它用作哈希键，改变会导致查找失败
-            // 实际的平均偏移存储在actualOffsetSum/offsetCount中
         }
         
         // 删除被合并的session
