@@ -19,196 +19,214 @@ HashComputer::ComputeHashReturn HashComputer::computeHash(
     
     ComputeHashReturn result;
     result.isHashComputed = false;
+    result.consumedFrameCount = 0;
     
-    // 确保我们有至少3帧
-    if (longFrames.size() < 3) {
-        std::cout << "[DEBUG-指纹生成] HashComputer: 帧历史不足3帧，无法生成指纹" << std::endl;
+    // 获取指纹生成配置
+    const auto& signatureConfig = config_->getSignatureGenerationConfig();
+    const size_t symmetricRange = signatureConfig.symmetricFrameRange;
+    
+    // 确保我们有足够的帧进行扩展选取
+    // 需要至少 2*symmetricRange + 1 帧才能进行一次完整的对称选取
+    size_t minRequiredFrames = 2 * symmetricRange + 1;
+    if (longFrames.size() < minRequiredFrames) {
+        std::cout << "[DEBUG-指纹生成] HashComputer: 帧历史不足" << minRequiredFrames 
+                  << "帧(对称范围=" << symmetricRange << ")，无法生成指纹，当前帧数:" 
+                  << longFrames.size() << std::endl;
         return result;
     }
 
-    // 获取指纹生成配置
-    const auto& signatureConfig = config_->getSignatureGenerationConfig();
-    
-    // 使用滑动窗口方式处理所有可能的三帧组合
+    // 使用滑动窗口方式处理，但现在使用扩展的对称选取
     size_t totalAcceptedCombinations = 0;
     
-    // 计算可能的滑动窗口数量
-    size_t numWindows = longFrames.size() - 2; // 至少需要3帧一组
+    // 计算可以进行处理的锚点位置范围
+    // 锚点必须距离边界至少symmetricRange的距离
+    size_t firstAnchorIndex = symmetricRange;
+    size_t lastAnchorIndex = longFrames.size() - symmetricRange - 1;
     
-    std::cout << "[DEBUG-指纹生成] HashComputer: 发现" << numWindows 
-              << "个可能的三帧窗口组合，开始处理" << std::endl;
-    
-    // 对每个可能的三帧窗口进行处理
-    for (size_t windowStart = 0; windowStart < numWindows; windowStart++) {
-        // 获取当前窗口的三帧
-        const Frame& frame1 = longFrames[windowStart];     // 窗口中最旧的帧
-        const Frame& frame2 = longFrames[windowStart + 1]; // 窗口中间帧
-        const Frame& frame3 = longFrames[windowStart + 2]; // 窗口中最新的帧
-        
-        std::cout << "[DEBUG-指纹生成] HashComputer: 处理第" << (windowStart + 1) << "/"
-                  << numWindows << "个窗口，帧时间戳: " << frame1.timestamp << "s, "
-                  << frame2.timestamp << "s, " << frame3.timestamp << "s" << std::endl;
-        
-        // 统计不同原因的过滤数量
-        size_t totalPossibleCombinations = 0;
-        size_t filteredByFreqDelta1_min = 0;
-        size_t filteredByFreqDelta1_max = 0;
-        size_t filteredByTimeDelta1 = 0;
-        size_t filteredByFreqDelta2 = 0;
-        size_t filteredByTimeDelta2 = 0;
-        size_t filteredByFreqDeltaSimilarity = 0;
-        size_t filteredByLowScore = 0;
-        size_t validCombinations = 0;
-        size_t acceptedCombinations = 0;
-        
-        // 潜在组合总数
-        size_t theoreticalCombinations = frame1.peaks.size() * frame2.peaks.size() * frame3.peaks.size();
-        
-        // 跳过包含空帧的窗口
-        if (frame1.peaks.empty() || frame2.peaks.empty() || frame3.peaks.empty()) {
-            std::cout << "[警告-指纹生成] HashComputer: 窗口" << (windowStart + 1) 
-                      << "存在空帧，跳过此窗口" << std::endl;
-            continue;
-        }
-        
-        std::cout << "[DEBUG-指纹生成] HashComputer: 窗口" << (windowStart + 1) 
-                  << "理论可能的峰值组合数: " << theoreticalCombinations << " (帧1:"
-                  << frame1.peaks.size() << "峰值, 帧2:" << frame2.peaks.size() 
-                  << "峰值, 帧3:" << frame3.peaks.size() << "峰值)" << std::endl;
-        
-        // 收集所有有效的峰值组合并计算评分
-        std::vector<ScoredTripleFrameCombination> validCombinationsVec;
-        
-        // 从中间帧选择锚点峰值
-        for (const auto& anchorPeak : frame2.peaks) {
-            // 从第一帧（最旧）和第三帧（最新）中选择目标峰值
-            for (const auto& targetPeak1 : frame1.peaks) {
-                // 计算所有可能的组合数
-                totalPossibleCombinations += frame3.peaks.size();
-                
-                // 计算第一个频率差并检查是否在有效范围内
-                int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak1.frequency);
-                if (std::abs(freqDelta1) < signatureConfig.minFreqDelta) {
-                    filteredByFreqDelta1_min += frame3.peaks.size();
-                    continue; // 跳过频率差太小
-                }
-                if (std::abs(freqDelta1) > signatureConfig.maxFreqDelta) {
-                    filteredByFreqDelta1_max += frame3.peaks.size();
-                    continue; // 跳过频率差太大
-                }
-                
-                // 检查时间差是否在有效范围内
-                double timeDelta1 = anchorPeak.timestamp - targetPeak1.timestamp;
-                if (std::abs(timeDelta1) > signatureConfig.maxTimeDelta) {
-                    filteredByTimeDelta1 += frame3.peaks.size();
-                    continue; // 跳过时间差太大的配对
-                }
+    std::cout << "[DEBUG-指纹生成] HashComputer: 使用对称范围" << symmetricRange 
+              << "，锚点范围[" << firstAnchorIndex << "," << lastAnchorIndex 
+              << "]，开始扩展三帧选取" << std::endl;
 
-                for (const auto& targetPeak2 : frame3.peaks) {
-                    // 计算第二个频率差并检查是否在有效范围内
-                    int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency) - static_cast<int32_t>(anchorPeak.frequency);
-                    if (std::abs(freqDelta2) < signatureConfig.minFreqDelta || 
-                        std::abs(freqDelta2) > signatureConfig.maxFreqDelta) {
-                        filteredByFreqDelta2++;
-                        continue; // 跳过频率差太小或太大的配对
+    // 遍历所有可能的锚点位置
+    for (size_t anchorIndex = firstAnchorIndex; anchorIndex <= lastAnchorIndex; anchorIndex++) {
+        std::cout << "[DEBUG-指纹生成] HashComputer: 处理锚点位置=" << anchorIndex << std::endl;
+
+        // 生成对称的三帧组合：从(x-n, x, x+n)到(x-1, x, x+1)
+        for (size_t distance = 1; distance <= symmetricRange; distance++) {
+            size_t frame1Index = anchorIndex - distance;  // 左侧帧
+            size_t frame2Index = anchorIndex;             // 锚点帧
+            size_t frame3Index = anchorIndex + distance;  // 右侧帧
+            
+            const Frame& frame1 = longFrames[frame1Index];
+            const Frame& frame2 = longFrames[frame2Index]; 
+            const Frame& frame3 = longFrames[frame3Index];
+            
+            std::cout << "[DEBUG-指纹生成] HashComputer: 处理距离=" << distance 
+                      << "的三帧组合，帧索引[" << frame1Index << "," << frame2Index << "," << frame3Index 
+                      << "]，时间戳[" << frame1.timestamp << "s," << frame2.timestamp << "s," 
+                      << frame3.timestamp << "s]" << std::endl;
+            
+            // 统计不同原因的过滤数量
+            size_t totalPossibleCombinations = 0;
+            size_t filteredByFreqDelta1_min = 0;
+            size_t filteredByFreqDelta1_max = 0;
+            size_t filteredByTimeDelta1 = 0;
+            size_t filteredByFreqDelta2 = 0;
+            size_t filteredByTimeDelta2 = 0;
+            size_t filteredByFreqDeltaSimilarity = 0;
+            size_t filteredByLowScore = 0;
+            size_t validCombinations = 0;
+            size_t acceptedCombinations = 0;
+            
+            // 潜在组合总数
+            size_t theoreticalCombinations = frame1.peaks.size() * frame2.peaks.size() * frame3.peaks.size();
+            
+            // 跳过包含空帧的窗口
+            if (frame1.peaks.empty() || frame2.peaks.empty() || frame3.peaks.empty()) {
+                std::cout << "[警告-指纹生成] HashComputer: 锚点" << anchorIndex  << "，距离" << distance << "，"
+                          << "存在空帧，跳过此窗口" << std::endl;
+                continue;
+            }
+            
+            std::cout << "[DEBUG-指纹生成] HashComputer: 锚点" << anchorIndex  << "，距离" << distance << "，"
+                      << "理论可能的峰值组合数: " << theoreticalCombinations << " (帧1:"
+                      << frame1.peaks.size() << "峰值, 帧2:" << frame2.peaks.size() 
+                      << "峰值, 帧3:" << frame3.peaks.size() << "峰值)" << std::endl;
+            
+            // 收集所有有效的峰值组合并计算评分
+            std::vector<ScoredTripleFrameCombination> validCombinationsVec;
+            
+            // 从中间帧选择锚点峰值
+            for (const auto& anchorPeak : frame2.peaks) {
+                // 从第一帧（最旧）和第三帧（最新）中选择目标峰值
+                for (const auto& targetPeak1 : frame1.peaks) {
+                    // 计算所有可能的组合数
+                    totalPossibleCombinations += frame3.peaks.size();
+                    
+                    // 计算第一个频率差并检查是否在有效范围内
+                    int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak1.frequency);
+                    if (std::abs(freqDelta1) < signatureConfig.minFreqDelta) {
+                        filteredByFreqDelta1_min += frame3.peaks.size();
+                        continue; // 跳过频率差太小
+                    }
+                    if (std::abs(freqDelta1) > signatureConfig.maxFreqDelta) {
+                        filteredByFreqDelta1_max += frame3.peaks.size();
+                        continue; // 跳过频率差太大
                     }
                     
                     // 检查时间差是否在有效范围内
-                    double timeDelta2 = targetPeak2.timestamp - anchorPeak.timestamp;
-                    if (std::abs(timeDelta2) > signatureConfig.maxTimeDelta) {
-                        filteredByTimeDelta2++;
+                    double timeDelta1 = anchorPeak.timestamp - targetPeak1.timestamp;
+                    if (std::abs(timeDelta1) > signatureConfig.maxTimeDelta) {
+                        filteredByTimeDelta1 += frame3.peaks.size();
                         continue; // 跳过时间差太大的配对
                     }
-                    
-                    // 确保频率差之间有足够的差异，避免生成类似的哈希值
-                    if (std::abs(freqDelta1 - freqDelta2) < signatureConfig.minFreqDelta / 2) {
-                        filteredByFreqDeltaSimilarity++;
-                        continue; // 两个频率差太相似
+
+                    for (const auto& targetPeak2 : frame3.peaks) {
+                        // 计算第二个频率差并检查是否在有效范围内
+                        int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency) - static_cast<int32_t>(anchorPeak.frequency);
+                        if (std::abs(freqDelta2) < signatureConfig.minFreqDelta || 
+                            std::abs(freqDelta2) > signatureConfig.maxFreqDelta) {
+                            filteredByFreqDelta2++;
+                            continue; // 跳过频率差太小或太大的配对
+                        }
+                        
+                        // 检查时间差是否在有效范围内
+                        double timeDelta2 = targetPeak2.timestamp - anchorPeak.timestamp;
+                        if (std::abs(timeDelta2) > signatureConfig.maxTimeDelta) {
+                            filteredByTimeDelta2++;
+                            continue; // 跳过时间差太大的配对
+                        }
+                        
+                        // 确保频率差之间有足够的差异，避免生成类似的哈希值
+                        if (std::abs(freqDelta1 - freqDelta2) < signatureConfig.minFreqDelta / 2) {
+                            filteredByFreqDeltaSimilarity++;
+                            continue; // 两个频率差太相似
+                        }
+                        
+                        // 计算评分
+                        double score = computeTripleFrameCombinationScore(anchorPeak, targetPeak1, targetPeak2);
+                        
+                        // 检查评分是否满足最低阈值
+                        if (score < signatureConfig.minTripleFrameScore) {
+                            filteredByLowScore++;
+                            continue; // 跳过评分过低的组合
+                        }
+                        
+                        // 计算三帧组合哈希值，使用峰值的实际时间戳，而不是帧的时间戳
+                        uint32_t hash = computeTripleFrameHash(anchorPeak, targetPeak1, targetPeak2);
+                        
+                        // 添加到有效组合列表
+                        ScoredTripleFrameCombination combination;
+                        combination.anchorPeak = &anchorPeak;
+                        combination.targetPeak1 = &targetPeak1;
+                        combination.targetPeak2 = &targetPeak2;
+                        combination.score = score;
+                        combination.hash = hash;
+                        
+                        validCombinationsVec.push_back(combination);
+                        validCombinations++;
                     }
-                    
-                    // 计算评分
-                    double score = computeTripleFrameCombinationScore(anchorPeak, targetPeak1, targetPeak2);
-                    
-                    // 检查评分是否满足最低阈值
-                    if (score < signatureConfig.minTripleFrameScore) {
-                        filteredByLowScore++;
-                        continue; // 跳过评分过低的组合
-                    }
-                    
-                    // 计算三帧组合哈希值，使用峰值的实际时间戳，而不是帧的时间戳
-                    uint32_t hash = computeTripleFrameHash(anchorPeak, targetPeak1, targetPeak2);
-                    
-                    // 添加到有效组合列表
-                    ScoredTripleFrameCombination combination;
-                    combination.anchorPeak = &anchorPeak;
-                    combination.targetPeak1 = &targetPeak1;
-                    combination.targetPeak2 = &targetPeak2;
-                    combination.score = score;
-                    combination.hash = hash;
-                    
-                    validCombinationsVec.push_back(combination);
-                    validCombinations++;
                 }
             }
-        }
-        
-        // 按评分排序，保留topN
-        std::sort(validCombinationsVec.begin(), validCombinationsVec.end(), std::greater<ScoredTripleFrameCombination>());
-        
-        // 限制保留的组合数量
-        size_t maxCombinations = std::min(validCombinationsVec.size(), signatureConfig.maxTripleFrameCombinations);
-        acceptedCombinations = 0;
-        
-        // 生成签名点
-        for (size_t i = 0; i < maxCombinations; i++) {
-            const auto& combination = validCombinationsVec[i];
             
-            // 创建签名点
-            SignaturePoint signaturePoint;
-            signaturePoint.hash = combination.hash;
-            signaturePoint.timestamp = combination.anchorPeak->timestamp; // 使用锚点峰值的精确时间戳
-            signaturePoint.frequency = combination.anchorPeak->frequency;
-            signaturePoint.amplitude = static_cast<uint32_t>(combination.anchorPeak->magnitude * 1000);
+            // 按评分排序，保留topN
+            std::sort(validCombinationsVec.begin(), validCombinationsVec.end(), std::greater<ScoredTripleFrameCombination>());
             
-            // Add to visualization data if enabled
-            if (*collectVisualizationData_) {
-                visualizationData_->fingerprintPoints.emplace_back(
-                    signaturePoint.frequency, 
-                    signaturePoint.timestamp, 
-                    signaturePoint.hash
-                );
-            }
+            // 限制保留的组合数量
+            size_t maxCombinations = std::min(validCombinationsVec.size(), signatureConfig.maxTripleFrameCombinations);
+            acceptedCombinations = 0;
+            
+            // 生成签名点
+            for (size_t i = 0; i < maxCombinations; i++) {
+                const auto& combination = validCombinationsVec[i];
+                
+                // 创建签名点
+                SignaturePoint signaturePoint;
+                signaturePoint.hash = combination.hash;
+                signaturePoint.timestamp = combination.anchorPeak->timestamp; // 使用锚点峰值的精确时间戳
+                signaturePoint.frequency = combination.anchorPeak->frequency;
+                signaturePoint.amplitude = static_cast<uint32_t>(combination.anchorPeak->magnitude * 1000);
+                
+                // Add to visualization data if enabled
+                if (*collectVisualizationData_) {
+                    visualizationData_->fingerprintPoints.emplace_back(
+                        signaturePoint.frequency, 
+                        signaturePoint.timestamp, 
+                        signaturePoint.hash
+                    );
+                }
 
-            signatures.push_back(signaturePoint);
-            acceptedCombinations++;
-        }
-        
-        totalAcceptedCombinations += acceptedCombinations;
-        
-        // 输出窗口过滤统计信息
-        if (totalPossibleCombinations > 0) {
-            std::cout << "[DEBUG-指纹生成] HashComputer: 窗口" << (windowStart + 1) 
-                      << "总可能组合: " << totalPossibleCombinations 
-                      << ", 有效组合: " << validCombinations
-                      << ", 接受: " << acceptedCombinations 
-                      << " (" << (acceptedCombinations * 100.0 / totalPossibleCombinations) << "%)" << std::endl;
-            
-            // 详细的过滤统计
-            if (validCombinations > 0) {
-                std::cout << "[DEBUG-指纹生成] HashComputer: 窗口" << (windowStart + 1) 
-                          << "过滤分布 - FreqDelta1_min: " << filteredByFreqDelta1_min << " (" << (filteredByFreqDelta1_min * 100.0 / totalPossibleCombinations) << "%)"
-                          << ", FreqDelta1_max: " << filteredByFreqDelta1_max << " (" << (filteredByFreqDelta1_max * 100.0 / totalPossibleCombinations) << "%)"
-                          << ", TimeDelta1: " << filteredByTimeDelta1 << " (" << (filteredByTimeDelta1 * 100.0 / totalPossibleCombinations) << "%)"
-                          << ", FreqDelta2: " << filteredByFreqDelta2 << " (" << (filteredByFreqDelta2 * 100.0 / totalPossibleCombinations) << "%)"
-                          << ", TimeDelta2: " << filteredByTimeDelta2 << " (" << (filteredByTimeDelta2 * 100.0 / totalPossibleCombinations) << "%)"
-                          << ", FreqDeltaSimilarity: " << filteredByFreqDeltaSimilarity << " (" << (filteredByFreqDeltaSimilarity * 100.0 / totalPossibleCombinations) << "%)"
-                          << ", LowScore: " << filteredByLowScore << " (" << (filteredByLowScore * 100.0 / totalPossibleCombinations) << "%)"
-                          << ", TopN筛选: " << (validCombinations - acceptedCombinations) << " (" << ((validCombinations - acceptedCombinations) * 100.0 / totalPossibleCombinations) << "%)"
-                          << std::endl;
+                signatures.push_back(signaturePoint);
+                acceptedCombinations++;
             }
-        } else {
-            std::cout << "[警告-指纹生成] HashComputer: 窗口" << (windowStart + 1) 
-                      << "没有可能的峰值组合，无法生成指纹" << std::endl;
+            
+            totalAcceptedCombinations += acceptedCombinations;
+            
+            // 输出窗口过滤统计信息
+            if (totalPossibleCombinations > 0) {
+                std::cout << "[DEBUG-指纹生成] HashComputer: 锚点" << anchorIndex  << "，距离" << distance << "，"
+                          << "总可能组合: " << totalPossibleCombinations 
+                          << ", 有效组合: " << validCombinations
+                          << ", 接受: " << acceptedCombinations 
+                          << " (" << (acceptedCombinations * 100.0 / totalPossibleCombinations) << "%)" << std::endl;
+                
+                // 详细的过滤统计
+                if (validCombinations > 0) {
+                    std::cout << "[DEBUG-指纹生成] HashComputer: 锚点" << anchorIndex  << "，距离" << distance << "，"
+                              << "过滤分布 - FreqDelta1_min: " << filteredByFreqDelta1_min << " (" << (filteredByFreqDelta1_min * 100.0 / totalPossibleCombinations) << "%)"
+                              << ", FreqDelta1_max: " << filteredByFreqDelta1_max << " (" << (filteredByFreqDelta1_max * 100.0 / totalPossibleCombinations) << "%)"
+                              << ", TimeDelta1: " << filteredByTimeDelta1 << " (" << (filteredByTimeDelta1 * 100.0 / totalPossibleCombinations) << "%)"
+                              << ", FreqDelta2: " << filteredByFreqDelta2 << " (" << (filteredByFreqDelta2 * 100.0 / totalPossibleCombinations) << "%)"
+                              << ", TimeDelta2: " << filteredByTimeDelta2 << " (" << (filteredByTimeDelta2 * 100.0 / totalPossibleCombinations) << "%)"
+                              << ", FreqDeltaSimilarity: " << filteredByFreqDeltaSimilarity << " (" << (filteredByFreqDeltaSimilarity * 100.0 / totalPossibleCombinations) << "%)"
+                              << ", LowScore: " << filteredByLowScore << " (" << (filteredByLowScore * 100.0 / totalPossibleCombinations) << "%)"
+                              << ", TopN筛选: " << (validCombinations - acceptedCombinations) << " (" << ((validCombinations - acceptedCombinations) * 100.0 / totalPossibleCombinations) << "%)"
+                              << std::endl;
+                }
+            } else {
+                std::cout << "[警告-指纹生成] HashComputer: 锚点" << anchorIndex  << "，距离" << distance << "，"
+                          << "没有可能的峰值组合，无法生成指纹" << std::endl;
+            }
         }
     }
     
@@ -219,70 +237,20 @@ HashComputer::ComputeHashReturn HashComputer::computeHash(
     // 设置结果
     result.isHashComputed = totalAcceptedCombinations > 0;
     
+    // 计算可以安全消费的帧数
+    // 由于我们现在处理了多个锚点位置，更加保守地消费帧
+    // 只消费一个锚点位置的帧，确保下次仍有足够的帧可用
+    if (result.isHashComputed) {
+        // 现在处理了多个锚点，可以消费更多帧，但仍要保守
+        // 消费的帧数等于已处理的锚点数量，但至少保留 symmetricRange 个帧用于下次计算
+        size_t processedAnchors = lastAnchorIndex - firstAnchorIndex + 1;
+        result.consumedFrameCount = processedAnchors;
+        
+        std::cout << "[DEBUG-指纹生成] HashComputer: 处理了" << processedAnchors << "个锚点位置，生成" 
+                  << totalAcceptedCombinations << "个指纹点，建议消费" << result.consumedFrameCount << "帧" << std::endl;
+    }
+    
     return result;
-}
-
-// 计算三帧组合哈希值
-uint32_t HashComputer::computeTripleFrameHash(
-    const Peak& anchorPeak,
-    const Peak& targetPeak1,
-    const Peak& targetPeak2) {
-
-    // 时间差最多是0.16s，粒度是0.1s，因此4位足够；进一步兼容，粒度放大到0.2s, 3位就足够了
-    // 频率差最大是3000Hz，最多需要12位，进一步兼容，粒度放大到4Hz, 10位就足够了，加上符号位，最多需要11位
-    // 频率最大是5000Hz，进一步兼容，粒度放大到2Hz, 最多需要12位
-    // 32位hash组成：
-    // [31:20] 锚点频率 (12位)        - 位置20-31, 锚点频率 除以 4Hz
-    // [19:10] combo1 (10位)         - 位置10-19  
-    //     [19:10] anchor-target1 频率差绝对值 (10位)     - 频率差绝对值 除以 4Hz
-    //        异或区域[10:10] anchor-target1的符号位(1位置) - 位置10，如果anchor-target1是负数，则该位置为1，否则为0
-    //        异或区域[13:11] anchor-target1的时间差 (3位) - 位置11-13, 时间差 除以 0.2s
-    //     将符号信息和时间差信息异或叠加到频率差信息的[13:10]上，得到combo1
-    // [9:0]  combo2 (10位)         - 位置0-9
-    //     [9:0] anchor-target2 频率差绝对值 (10位)     - 频率差绝对值 除以 4Hz
-    //        异或区域[0:0] anchor-target2的符号位(1位置) - 位置0，如果anchor-target2是负数，则该位置为1，否则为0
-    //        异或区域[3:1] anchor-target2的时间差 (3位) - 位置1-3, 时间差 除以 0.2s
-    //     将符号信息和时间差信息异或叠加到频率差信息的[3:0]上，得到combo2
-    // 因此需要12+10+10=32位
-    
-    // 1. 计算锚点频率 (12位，位置20-31)
-    uint32_t anchorFreqQuantized = (anchorPeak.frequency / 4) & 0xFFF; // 除以4Hz，限制为12位
-    
-    // 2. 计算combo1 (anchor-target1的组合)
-    int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak1.frequency);
-    uint32_t freqDelta1Abs = (static_cast<uint32_t>(std::abs(freqDelta1)) / 4) & 0x3FF; // 除以4Hz，限制为10位
-    uint32_t freqDelta1Sign = (freqDelta1 < 0) ? 1 : 0; // 符号位
-    
-    double timeDelta1 = anchorPeak.timestamp - targetPeak1.timestamp;
-    uint32_t timeDelta1Quantized = static_cast<uint32_t>(std::max(0.0, std::min(7.0, std::abs(timeDelta1) / 0.2))) & 0x7; // 除以0.2s，限制为3位
-    
-    // 构建combo1：将符号位和时间差信息异或到频率差信息的低4位[3:0]
-    uint32_t combo1 = freqDelta1Abs;
-    uint32_t timeSignCombo1 = (freqDelta1Sign) | (timeDelta1Quantized << 1); // 符号位(1位) + 时间差(3位) = 4位
-    combo1 ^= timeSignCombo1; // 异或到频率差的低4位
-    combo1 &= 0x3FF; // 确保只有10位
-    
-    // 3. 计算combo2 (anchor-target2的组合)
-    int32_t freqDelta2 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak2.frequency);
-    uint32_t freqDelta2Abs = (static_cast<uint32_t>(std::abs(freqDelta2)) / 4) & 0x3FF; // 除以4Hz，限制为10位
-    uint32_t freqDelta2Sign = (freqDelta2 < 0) ? 1 : 0; // 符号位
-    
-    double timeDelta2 = anchorPeak.timestamp - targetPeak2.timestamp;
-    uint32_t timeDelta2Quantized = static_cast<uint32_t>(std::max(0.0, std::min(7.0, std::abs(timeDelta2) / 0.2))) & 0x7; // 除以0.2s，限制为3位
-    
-    // 构建combo2：将符号位和时间差信息异或到频率差信息的低4位[3:0]
-    uint32_t combo2 = freqDelta2Abs;
-    uint32_t timeSignCombo2 = (freqDelta2Sign) | (timeDelta2Quantized << 1); // 符号位(1位) + 时间差(3位) = 4位
-    combo2 ^= timeSignCombo2; // 异或到频率差的低4位
-    combo2 &= 0x3FF; // 确保只有10位
-    
-    // 4. 组合32位哈希值
-    // [31:20] 锚点频率(12位) | [19:10] combo1(10位) | [9:0] combo2(10位)
-    uint32_t hash = (anchorFreqQuantized << 20) |  // 锚点频率 (12位) - 位置20-31
-                   (combo1 << 10) |               // combo1 (10位) - 位置10-19
-                   combo2;                        // combo2 (10位) - 位置0-9
-    
-    return hash;
 }
 
 // 计算哈希值
@@ -292,6 +260,7 @@ HashComputer::ComputeHashReturn HashComputer::computeHash2(
     
     ComputeHashReturn result;
     result.isHashComputed = false;
+    result.consumedFrameCount = 0;
     
     // 确保我们有至少2帧
     if (longFrames.size() < 2) {
@@ -459,9 +428,77 @@ HashComputer::ComputeHashReturn HashComputer::computeHash2(
     // 设置结果
     result.isHashComputed = totalAcceptedCombinations > 0;
     
+    // 对于双帧方法，也设置消费帧数量
+    if (result.isHashComputed) {
+        result.consumedFrameCount = 1; // 双帧方法每次消费1帧
+    }
+    
     return result;
 }
 
+
+// 计算三帧组合哈希值
+uint32_t HashComputer::computeTripleFrameHash(
+    const Peak& anchorPeak,
+    const Peak& targetPeak1,
+    const Peak& targetPeak2) {
+
+    // 时间差最多是0.16s，粒度是0.1s，因此4位足够；进一步兼容，粒度放大到0.2s, 3位就足够了
+    // 频率差最大是3000Hz，最多需要12位，进一步兼容，粒度放大到4Hz, 10位就足够了，加上符号位，最多需要11位
+    // 频率最大是5000Hz，进一步兼容，粒度放大到2Hz, 最多需要12位
+    // 32位hash组成：
+    // [31:20] 锚点频率 (12位)        - 位置20-31, 锚点频率 除以 4Hz
+    // [19:10] combo1 (10位)         - 位置10-19  
+    //     [19:10] anchor-target1 频率差绝对值 (10位)     - 频率差绝对值 除以 4Hz
+    //        异或区域[10:10] anchor-target1的符号位(1位置) - 位置10，如果anchor-target1是负数，则该位置为1，否则为0
+    //        异或区域[14:11] anchor-target1的时间差 (4位) - 位置11-14, 时间差 除以 0.2s
+    //     将符号信息和时间差信息异或叠加到频率差信息的[14:10]上，得到combo1
+    // [9:0]  combo2 (10位)         - 位置0-9
+    //     [9:0] anchor-target2 频率差绝对值 (10位)     - 频率差绝对值 除以 4Hz
+    //        异或区域[0:0] anchor-target2的符号位(1位置) - 位置0，如果anchor-target2是负数，则该位置为1，否则为0
+    //        异或区域[4:1] anchor-target2的时间差 (4位) - 位置1-4, 时间差 除以 0.2s
+    //     将符号信息和时间差信息异或叠加到频率差信息的[4:0]上，得到combo2
+    // 因此需要12+10+10=32位
+    
+    // 1. 计算锚点频率 (12位，位置20-31)
+    uint32_t anchorFreqQuantized = (anchorPeak.frequency / 4) & 0xFFF; // 除以4Hz，限制为12位
+    
+    // 2. 计算combo1 (anchor-target1的组合)
+    int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak1.frequency);
+    uint32_t freqDelta1Abs = (static_cast<uint32_t>(std::abs(freqDelta1)) / 4) & 0x3FF; // 除以4Hz，限制为10位
+    uint32_t freqDelta1Sign = (freqDelta1 < 0) ? 1 : 0; // 符号位
+    
+    double timeDelta1 = anchorPeak.timestamp - targetPeak1.timestamp;
+    uint32_t timeDelta1Quantized = static_cast<uint32_t>(std::max(0.0, std::min(15.0, std::abs(timeDelta1) / 0.2))) & 0xF; // 除以0.2s，限制为4位
+    
+    // 构建combo1：将符号位和时间差信息异或到频率差信息的低5位[4:0]
+    uint32_t combo1 = freqDelta1Abs;
+    uint32_t timeSignCombo1 = (freqDelta1Sign) | (timeDelta1Quantized << 1); // 符号位(1位) + 时间差(4位) = 5位
+    combo1 ^= timeSignCombo1; // 异或到频率差的低5位
+    combo1 &= 0x3FF; // 确保只有10位
+    
+    // 3. 计算combo2 (anchor-target2的组合)
+    int32_t freqDelta2 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak2.frequency);
+    uint32_t freqDelta2Abs = (static_cast<uint32_t>(std::abs(freqDelta2)) / 4) & 0x3FF; // 除以4Hz，限制为10位
+    uint32_t freqDelta2Sign = (freqDelta2 < 0) ? 1 : 0; // 符号位
+    
+    double timeDelta2 = anchorPeak.timestamp - targetPeak2.timestamp;
+    uint32_t timeDelta2Quantized = static_cast<uint32_t>(std::max(0.0, std::min(15.0, std::abs(timeDelta2) / 0.2))) & 0xF; // 除以0.2s，限制为4位
+    
+    // 构建combo2：将符号位和时间差信息异或到频率差信息的低5位[4:0]
+    uint32_t combo2 = freqDelta2Abs;
+    uint32_t timeSignCombo2 = (freqDelta2Sign) | (timeDelta2Quantized << 1); // 符号位(1位) + 时间差(4位) = 5位
+    combo2 ^= timeSignCombo2; // 异或到频率差的低5位
+    combo2 &= 0x3FF; // 确保只有10位
+    
+    // 4. 组合32位哈希值
+    // [31:20] 锚点频率(12位) | [19:10] combo1(10位) | [9:0] combo2(10位)
+    uint32_t hash = (anchorFreqQuantized << 20) |  // 锚点频率 (12位) - 位置20-31
+                   (combo1 << 10) |               // combo1 (10位) - 位置10-19
+                   combo2;                        // combo2 (10位) - 位置0-9
+    
+    return hash;
+}
 
 // 计算三帧组合哈希值
 uint32_t HashComputer::computeDoubleFrameHash(

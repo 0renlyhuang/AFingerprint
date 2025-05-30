@@ -21,7 +21,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     
     // FFT配置 - 移动端使用较小的窗口以节省内存和计算资源
     config->fftConfig_.fftSize = 1024;    // 较小的FFT窗口
-    config->fftConfig_.hopSize = 441;     // 0.1秒/帧 (44.1kHz采样率下约为441样本)
+    config->fftConfig_.hopSize = 441;     // 0.01秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
     config->peakDetectionConfig_.localMaxRange = 5;        // 较小的本地最大值范围
@@ -44,12 +44,15 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     // 指纹生成配置 - 针对三帧组合哈希优化
     config->signatureGenerationConfig_.minFreqDelta = 60;   // 最小频率差，增加区分度
     config->signatureGenerationConfig_.maxFreqDelta = 3500;  // 最大频率差，避免跨度太大
-    config->signatureGenerationConfig_.maxTimeDelta = 0.2;  // 最大时间差限制为0.2秒，增强时间相关性
+    config->signatureGenerationConfig_.maxTimeDelta = 0.3;  // 最大时间差限制为0.2秒，增强时间相关性
     config->signatureGenerationConfig_.frameDuration = 0.08; // 移动端使用较短的长帧时长，优化性能
     config->signatureGenerationConfig_.maxDoubleFrameCombinations = 8; // 移动端保留8个最佳组合，平衡性能和准确性
     config->signatureGenerationConfig_.minDoubleFrameScore = 10.0; // 移动端评分阈值，过滤质量较差的组合
     config->signatureGenerationConfig_.maxTripleFrameCombinations = 12; // 移动端保留5个最佳三帧组合，优化性能
     config->signatureGenerationConfig_.minTripleFrameScore = 15.0; // 移动端三帧评分阈值，过滤低质量组合
+    
+    // 扩展三帧选取配置 - 移动端
+    config->signatureGenerationConfig_.symmetricFrameRange = 2;    // 移动端对称范围2，生成(x-2,x,x+2)到(x-1,x,x+1)
     
     // 匹配配置 - 移动端使用较严格的参数以减少内存使用
     config->matchingConfig_.maxCandidates = 20;            // 较少的候选结果
@@ -96,6 +99,9 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createDesktopConfi
     config->signatureGenerationConfig_.maxTripleFrameCombinations = 10; // 桌面端保留10个最佳三帧组合，平衡准确性和性能
     config->signatureGenerationConfig_.minTripleFrameScore = 18.0; // 桌面端三帧评分阈值，平衡准确性和覆盖率
     
+    // 扩展三帧选取配置 - 桌面端
+    config->signatureGenerationConfig_.symmetricFrameRange = 3;    // 桌面端对称范围3，生成(x-3,x,x+3)到(x-1,x,x+1)
+    
     // 匹配配置 - PC端使用中等参数
     config->matchingConfig_.maxCandidates = 50;            // 中等候选结果数
     config->matchingConfig_.matchExpireTime = 5.0;         // 中等过期时间
@@ -140,6 +146,9 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createServerConfig
     config->signatureGenerationConfig_.minDoubleFrameScore = 10.0; // 服务器端评分阈值，更宽松以获得更高覆盖率
     config->signatureGenerationConfig_.maxTripleFrameCombinations = 15; // 服务器端保留15个最佳三帧组合，最高准确性
     config->signatureGenerationConfig_.minTripleFrameScore = 12.0; // 服务器端三帧评分阈值，更宽松以获得更高覆盖率
+    
+    // 扩展三帧选取配置 - 服务器端
+    config->signatureGenerationConfig_.symmetricFrameRange = 4;    // 服务器端对称范围4，生成(x-4,x,x+4)到(x-1,x,x+1)
     
     // 匹配配置 - 服务器端使用较宽松的参数
     config->matchingConfig_.maxCandidates = 100;           // 较多的候选结果

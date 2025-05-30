@@ -48,6 +48,9 @@ struct SignatureGenerationConfig {
     double minDoubleFrameScore; // 双帧峰值组合的最低评分阈值，低于此分数的组合将被丢弃
     size_t maxTripleFrameCombinations; // 每个三帧窗口保留的最大峰值组合数
     double minTripleFrameScore; // 三帧峰值组合的最低评分阈值，低于此分数的组合将被丢弃
+    
+    // 扩展三帧选取配置
+    size_t symmetricFrameRange;   // 对称帧范围n，生成(x-n,x,x+n)到(x-1,x,x+1)的组合
 };
 
 // 匹配配置

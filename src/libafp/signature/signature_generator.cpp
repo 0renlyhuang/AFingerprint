@@ -267,10 +267,12 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer,
                         auto hashResult = hashComputer_->computeHash(longFrameBuilder_->getLongFrames(channel), signatures_);
                         if (hashResult.isHashComputed) {
                             std::cout << "[DEBUG-指纹] SignatureGenerator: 通道" << channel 
-                                        << "生成了新的指纹点，当前总数: " << signatures_.size() << std::endl;
+                                        << "生成了新的指纹点，当前总数: " << signatures_.size() 
+                                        << "，建议消费帧数: " << hashResult.consumedFrameCount << std::endl;
+                            
+                            // 移除已消费的长帧，现在使用扩展的对称范围逻辑
+                            longFrameBuilder_->removeFrontNLongFrame(channel, hashResult.consumedFrameCount);
                         }
-
-                        longFrameBuilder_->removeConsumedLongFrame(channel);
                     }
                 }
             }

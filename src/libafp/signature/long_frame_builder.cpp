@@ -182,28 +182,49 @@ bool LongFrameBuilder::processLongFrame(uint32_t channel, const std::vector<Peak
 }
 
 // 移除长帧
-void LongFrameBuilder::removeConsumedLongFrame(uint32_t channel) {
-    // 只保留最新的2帧
-    std::vector<double> removedTimestamps;
-    while (frameMap_.find(channel) != frameMap_.end() && frameMap_[channel].size() > 2) {
-        double removedTimestamp = frameMap_[channel].front().timestamp;
-        removedTimestamps.push_back(removedTimestamp);
-        frameMap_[channel].pop_front();
+void LongFrameBuilder::removeFrontNLongFrame(uint32_t channel, size_t n) {
+    // 检查当前通道是否有帧历史
+    if (frameMap_.find(channel) == frameMap_.end()) {
+        std::cout << "[DEBUG-长帧处理] LongFrameBuilder: 通道" << channel 
+                  << "没有长帧历史，无需移除" << std::endl;
+        return;
     }
-
+    
+    auto& frames = frameMap_[channel];
+    
+    // 如果没有帧或者要求移除0个帧，直接返回
+    if (frames.empty() || n == 0) {
+        std::cout << "[DEBUG-长帧处理] LongFrameBuilder: 通道" << channel 
+                  << "当前帧数: " << frames.size() << "，要求移除: " << n 
+                  << "，无需操作" << std::endl;
+        return;
+    }
+    
+    // 计算实际能移除的帧数（不超过现有帧数）
+    size_t actualRemoveCount = std::min(n, frames.size());
+    
+    std::vector<double> removedTimestamps;
+    
+    // 移除前 actualRemoveCount 个帧
+    for (size_t i = 0; i < actualRemoveCount; i++) {
+        double removedTimestamp = frames.front().timestamp;
+        removedTimestamps.push_back(removedTimestamp);
+        frames.pop_front();
+    }
+    
+    // 输出移除结果
+    std::cout << "[DEBUG-长帧处理] LongFrameBuilder: 通道" << channel 
+              << "请求移除" << n << "个帧，实际移除" << actualRemoveCount 
+              << "个帧，剩余长帧数量: " << frames.size() << std::endl;
+    
+    // 输出被移除的帧时间戳（仅在调试模式下）
     if (!removedTimestamps.empty()) {
-        std::ostringstream timestampsStr;
+        std::cout << "[DEBUG-长帧处理] 被移除的帧时间戳: ";
         for (size_t i = 0; i < removedTimestamps.size(); ++i) {
-            if (i > 0) timestampsStr << ", ";
-            timestampsStr << removedTimestamps[i] << "s";
+            if (i > 0) std::cout << ", ";
+            std::cout << removedTimestamps[i] << "s";
         }
-        
-        std::cout << "[DEBUG-长帧处理] LongFrameBuilder: 通道" << channel 
-                  << "移除了长帧，时间戳: [" << timestampsStr.str() 
-                  << "], 当前长帧数量: " << frameMap_[channel].size() << std::endl;
-    } else {
-        std::cout << "[DEBUG-长帧处理] LongFrameBuilder: 通道" << channel 
-                  << "没有移除长帧，当前长帧数量: " << frameMap_[channel].size() << std::endl;
+        std::cout << std::endl;
     }
 }
 

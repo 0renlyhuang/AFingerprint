@@ -41,6 +41,7 @@ public:
 
     struct ComputeHashReturn {
         bool isHashComputed;
+        size_t consumedFrameCount;  // 已消费的帧数量，用于指导帧移除
     };
 
     // 计算哈希值

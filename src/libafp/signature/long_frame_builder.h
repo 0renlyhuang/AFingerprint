@@ -28,7 +28,7 @@ public:
     const std::deque<Frame>& getLongFrames(uint32_t channel) const;
 
     // 移除长帧
-    void removeConsumedLongFrame(uint32_t channel);
+    void removeFrontNLongFrame(uint32_t channel, size_t n);
     
     // 重置所有数据
     void reset();
