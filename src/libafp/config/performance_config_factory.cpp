@@ -48,15 +48,16 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->signatureGenerationConfig_.frameDuration = 0.08; // 移动端使用较短的长帧时长，优化性能
     config->signatureGenerationConfig_.maxDoubleFrameCombinations = 8; // 移动端保留8个最佳组合，平衡性能和准确性
     config->signatureGenerationConfig_.minDoubleFrameScore = 10.0; // 移动端评分阈值，过滤质量较差的组合
-    config->signatureGenerationConfig_.maxTripleFrameCombinations = 12; // 移动端保留5个最佳三帧组合，优化性能
+    config->signatureGenerationConfig_.maxTripleFrameCombinations = 7; // 移动端保留5个最佳三帧组合，优化性能
     config->signatureGenerationConfig_.minTripleFrameScore = 15.0; // 移动端三帧评分阈值，过滤低质量组合
     
     // 扩展三帧选取配置 - 移动端
     config->signatureGenerationConfig_.symmetricFrameRange = 2;    // 移动端对称范围2，生成(x-2,x,x+2)到(x-1,x,x+1)
     
     // 匹配配置 - 移动端使用较严格的参数以减少内存使用
-    config->matchingConfig_.maxCandidates = 20;            // 较少的候选结果
-    config->matchingConfig_.matchExpireTime = 50.0;         // 较短的过期时间
+    config->matchingConfig_.maxCandidates = 200;            // 较少的候选结果
+    config->matchingConfig_.maxCandidatesPerSignature = 6;  // 移动端每个signature最多3个候选结果，节省内存
+    config->matchingConfig_.matchExpireTime = 5.0;         // 较短的过期时间
     config->matchingConfig_.minConfidenceThreshold = 0.5;  // 较高的置信度阈值
     config->matchingConfig_.minMatchesRequired = 5;       // 减少最小匹配点数要求
     config->matchingConfig_.offsetTolerance = 0.007;        // 较大的时间偏移容忍度
@@ -104,6 +105,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createDesktopConfi
     
     // 匹配配置 - PC端使用中等参数
     config->matchingConfig_.maxCandidates = 50;            // 中等候选结果数
+    config->matchingConfig_.maxCandidatesPerSignature = 5;  // 桌面端每个signature最多5个候选结果，平衡性能和准确性
     config->matchingConfig_.matchExpireTime = 5.0;         // 中等过期时间
     config->matchingConfig_.minConfidenceThreshold = 0.4;  // 中等置信度阈值
     config->matchingConfig_.minMatchesRequired = 15;       // 中等最小匹配点数
@@ -152,6 +154,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createServerConfig
     
     // 匹配配置 - 服务器端使用较宽松的参数
     config->matchingConfig_.maxCandidates = 100;           // 较多的候选结果
+    config->matchingConfig_.maxCandidatesPerSignature = 10; // 服务器端每个signature最多10个候选结果，追求最高准确性
     config->matchingConfig_.matchExpireTime = 10.0;        // 较长的过期时间
     config->matchingConfig_.minConfidenceThreshold = 0.3;  // 较低的置信度阈值
     config->matchingConfig_.minMatchesRequired = 10;       // 较少的最小匹配点数

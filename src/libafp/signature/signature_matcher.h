@@ -163,6 +163,7 @@ private:
 
     std::shared_ptr<IPerformanceConfig> config_;
     size_t maxCandidates_;         // 最大候选结果数
+    size_t maxCandidatesPerSignature_; // 每个signature的最大候选结果数
     double matchExpireTime_;       // 匹配过期时间 (秒)
     float minConfidenceThreshold_; // 最小置信度阈值
     size_t minMatchesRequired_;    // 最小匹配点数要求
@@ -201,6 +202,31 @@ private:
     
     // Helper method for merging sessions with similar time offsets
     void mergeSimilarSessions();
+    
+    // 尝试将新的候选session与现有的同signature sessions合并
+    // 返回值：如果成功合并返回被合并到的sessionKey，否则返回{0, nullptr}
+    CandidateSessionKey tryMergeWithExistingSessions(
+        const CandidateSessionKey& newSessionKey, 
+        const MatchingCandidate& newCandidate);
+    
+    // 计算候选session的分数
+    double calculateSessionScore(const MatchingCandidate& candidate, double currentTimestamp) const;
+    
+    // 找到分数最低的session
+    CandidateSessionKey findLowestScoreSession(double currentTimestamp) const;
+    
+    // 检查是否应该替换现有session
+    bool shouldReplaceSession(const MatchingCandidate& newCandidate, double currentTimestamp) const;
+    
+    // 找到指定signature下分数最低的session
+    CandidateSessionKey findLowestScoreSessionInSignature(
+        const std::vector<SignaturePoint>* signature, double currentTimestamp) const;
+    
+    // 检查是否应该替换同一signature下的现有session
+    bool shouldReplaceSessionInSignature(
+        const MatchingCandidate& newCandidate, 
+        const std::vector<SignaturePoint>* signature, 
+        double currentTimestamp) const;
 };
 
 } // namespace afp 

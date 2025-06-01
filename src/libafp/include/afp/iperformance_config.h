@@ -56,6 +56,7 @@ struct SignatureGenerationConfig {
 // 匹配配置
 struct MatchingConfig {
     size_t maxCandidates;         // 最大候选结果数
+    size_t maxCandidatesPerSignature; // 每个signature的最大候选结果数
     double matchExpireTime;       // 匹配过期时间 (秒)
     float minConfidenceThreshold; // 最小置信度阈值
     size_t minMatchesRequired;    // 最小匹配点数要求
