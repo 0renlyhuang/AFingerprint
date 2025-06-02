@@ -125,7 +125,7 @@ SignatureMatcher::SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::share
         // 对于单个hash值，不需要vector存储，直接存储
         // 对于多个hash值，需要vector存储
         for (const auto& point : signature) {
-            TargetSignatureInfo2 info = {&mediaItem, point.timestamp, &signature};
+            TargetSignatureInfo2 info = {&mediaItem, &point, &signature};
             if (hash2TargetSignaturesInfoMap_.find(point.hash) != hash2TargetSignaturesInfoMap_.end()) {
                 hash2TargetSignaturesInfoMap_[point.hash].push_back(std::move(info));
             } else {
@@ -224,7 +224,7 @@ void SignatureMatcher::processQuerySignature(
         const auto& targetSignaturesInfoList = targetIt->second;
         for (const auto& targetSignaturesInfo : targetSignaturesInfoList) {
             // 计算实际时间偏移
-            const auto actualOffset = calculate_actual_offset(queryPoint.timestamp, targetSignaturesInfo.hashTimestamp);
+            const auto actualOffset = calculate_actual_offset(queryPoint.timestamp, targetSignaturesInfo.signaturePoint->timestamp);
 
             const auto sessionKey = CandidateSessionKey{
                 .offset = actualOffset,
@@ -239,7 +239,20 @@ void SignatureMatcher::processQuerySignature(
                 }
                 if (queryPoint.timestamp >= candidate.lastMatchTime || true) {  // todo: 当前不考虑时间戳，直接更新match count
                     candidate.matchCount += 1;
-                    candidate.matchInfos.push_back(DebugMatchInfo { hexHashString(queryPoint.hash), queryPoint.timestamp, targetSignaturesInfo.hashTimestamp, actualOffset });
+                    
+                    // 直接使用targetSignaturesInfo.signaturePoint中的完整信息
+                    const SignaturePoint* sourcePoint = targetSignaturesInfo.signaturePoint;
+                    
+                    candidate.matchInfos.push_back(DebugMatchInfo { 
+                        hexHashString(queryPoint.hash), 
+                        queryPoint.timestamp, 
+                        targetSignaturesInfo.signaturePoint->timestamp, 
+                        actualOffset, 
+                        queryPoint.frequency, 
+                        queryPoint.amplitude,
+                        sourcePoint->frequency,
+                        sourcePoint->amplitude
+                    });
                     candidate.lastMatchTime = queryPoint.timestamp;
                     candidate.isMatchCountChanged = true;
                     
@@ -247,10 +260,20 @@ void SignatureMatcher::processQuerySignature(
                     candidate.actualOffsetSum += actualOffset;
                     candidate.offsetCount += 1;
 
-                    // Add to visualization data if enabled
+                    // 存储到session历史记录中，用于可视化
                     if (collectVisualizationData_) {
-                        visualizationData_.matchedPoints.emplace_back(
-                            queryPoint.frequency, queryPoint.timestamp, queryPoint.hash, sessionKey.offset);
+                        std::string sessionId = generateSessionId(sessionKey);
+                        allSessionsHistory_[sessionId].push_back(
+                            DebugMatchInfo { 
+                                hexHashString(queryPoint.hash), 
+                                queryPoint.timestamp, 
+                                targetSignaturesInfo.signaturePoint->timestamp, 
+                                actualOffset, 
+                                queryPoint.frequency, 
+                                queryPoint.amplitude,
+                                sourcePoint->frequency,
+                                sourcePoint->amplitude
+                            });
                     }
 
                     continue;
@@ -267,11 +290,23 @@ void SignatureMatcher::processQuerySignature(
                 const auto targetHashesCount = targetSignaturesInfo.signature->size();
                 const auto maxPossibleMatches = static_cast<size_t>(targetHashesCount * channelRatio);
 
+                // 查找源SignaturePoint以获取完整信息（源点就是目标签名中的匹配点）
+                const SignaturePoint* sourcePoint = targetSignaturesInfo.signaturePoint;
+                
                 MatchingCandidate newCandidate = {
                     .targetSignatureInfo = &targetSignaturesInfo,
                     .maxPossibleMatches = maxPossibleMatches,
                     .matchCount = 1,
-                    .matchInfos = { DebugMatchInfo { hexHashString(queryPoint.hash), queryPoint.timestamp, targetSignaturesInfo.hashTimestamp, actualOffset } },
+                    .matchInfos = { DebugMatchInfo { 
+                        hexHashString(queryPoint.hash), 
+                        queryPoint.timestamp, 
+                        targetSignaturesInfo.signaturePoint->timestamp, 
+                        actualOffset, 
+                        queryPoint.frequency, 
+                        queryPoint.amplitude,
+                        sourcePoint->frequency,
+                        sourcePoint->amplitude
+                    } },
                     .lastMatchTime = queryPoint.timestamp,
                     .offset = actualOffset,
                     .actualOffsetSum = actualOffset,  // 初始化累积偏移
@@ -285,8 +320,18 @@ void SignatureMatcher::processQuerySignature(
                 if (mergedSessionKey.signature != nullptr) {
                     // 成功合并到现有session，添加可视化数据
                     if (collectVisualizationData_) {
-                        visualizationData_.matchedPoints.emplace_back(
-                            queryPoint.frequency, queryPoint.timestamp, queryPoint.hash, sessionKey.offset);
+                        std::string sessionId = generateSessionId(mergedSessionKey);
+                        allSessionsHistory_[sessionId].push_back(
+                            DebugMatchInfo { 
+                                hexHashString(queryPoint.hash), 
+                                queryPoint.timestamp, 
+                                targetSignaturesInfo.signaturePoint->timestamp, 
+                                actualOffset, 
+                                queryPoint.frequency, 
+                                queryPoint.amplitude,
+                                sourcePoint->frequency,
+                                sourcePoint->amplitude
+                            });
                     }
                     
                     if (queryPointprint < 300) {
@@ -343,17 +388,27 @@ void SignatureMatcher::processQuerySignature(
                     // 添加新session
                     signature2SessionCnt_[targetSignaturesInfo.signature] += 1;
                     
-                    // Add to visualization data if enabled
+                    // 存储到session历史记录中，用于可视化
                     if (collectVisualizationData_) {
-                        visualizationData_.matchedPoints.emplace_back(
-                            queryPoint.frequency, queryPoint.timestamp, queryPoint.hash, sessionKey.offset);
+                        std::string sessionId = generateSessionId(sessionKey);
+                        allSessionsHistory_[sessionId].push_back(
+                            DebugMatchInfo { 
+                                hexHashString(queryPoint.hash), 
+                                queryPoint.timestamp, 
+                                targetSignaturesInfo.signaturePoint->timestamp, 
+                                actualOffset, 
+                                queryPoint.frequency, 
+                                queryPoint.amplitude,
+                                sourcePoint->frequency,
+                                sourcePoint->amplitude
+                            });
                     }
 
                     session2CandidateMap_[sessionKey] = newCandidate;
                     if (queryPointprint < 300) {
                         std::cout << "rrr add new candidate: " << queryPointprint << " hash: 0x" << std::hex << queryPoint.hash << std::dec 
                         << ", timestamp: " << queryPoint.timestamp 
-                        << ", targetSignaturesInfo.hashTimestamp: " << targetSignaturesInfo.hashTimestamp 
+                        << ", targetSignaturesInfo.signaturePoint->timestamp: " << targetSignaturesInfo.signaturePoint->timestamp 
                         << ", actualOffset: " << actualOffset 
                         << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
                         << ", matchcount: " << newCandidate.matchCount 
@@ -811,8 +866,35 @@ bool SignatureMatcher::saveVisualization(const std::string& filename) const {
         return false;
     }
     
+    // 创建可视化数据的副本，重新生成matchedPoints
+    VisualizationData finalVisualizationData = visualizationData_;
+    finalVisualizationData.matchedPoints.clear();
+    
+    // 基于allSessionsHistory_重新生成matchedPoints
+    for (const auto& [sessionId, matchInfos] : allSessionsHistory_) {
+        for (const auto& matchInfo : matchInfos) {
+            // 解析hash字符串
+            uint32_t hash = 0;
+            if (matchInfo.hash.find("0x") != std::string::npos) {
+                std::stringstream ss;
+                ss << std::hex << matchInfo.hash.substr(matchInfo.hash.find("0x") + 2);
+                ss >> hash;
+            }
+            
+            // 直接使用DebugMatchInfo中的信息，不需要手动查询
+            // 使用sessionId的hash值作为session标识
+            uint32_t sessionIdHash = std::hash<std::string>{}(sessionId);
+            finalVisualizationData.matchedPoints.push_back(
+                std::make_tuple(matchInfo.queryFrequency, matchInfo.queryTime, hash, sessionIdHash)
+            );
+        }
+    }
+    
+    std::cout << "Generated " << finalVisualizationData.matchedPoints.size() 
+              << " matched points from " << allSessionsHistory_.size() << " sessions" << std::endl;
+    
     // Save data to JSON (no Python script generation)
-    return Visualizer::saveVisualization(visualizationData_, filename);
+    return Visualizer::saveVisualization(finalVisualizationData, filename);
 }
 
 // Save sessions data for visualization
@@ -880,9 +962,6 @@ bool SignatureMatcher::saveComparisonData(const VisualizationData& sourceData,
     // Create a copy of the source data to enhance with matched points
     VisualizationData enhancedSourceData = sourceData;
     
-    // Create a map of session IDs to each matched point in query data
-    std::unordered_map<uint32_t, uint32_t> hashToSessionMap;
-    
     // Extract top sessions for visualizing
     std::vector<std::pair<CandidateSessionKey, MatchingCandidate>> candidates;
     for (const auto& pair : session2CandidateMap_) {
@@ -903,14 +982,19 @@ bool SignatureMatcher::saveComparisonData(const VisualizationData& sourceData,
     VisualizationData sessionQueryData = visualizationData_;
     sessionQueryData.matchedPoints.clear(); // Clear existing matched points
     
+    // 创建从session到序号的映射（用于保持兼容性）
+    std::unordered_map<std::string, uint32_t> sessionIdToIndex;
+    
     // For each top session, assign IDs to the matched points
     for (size_t i = 0; i < sessionsToInclude; ++i) {
         const auto& [key, candidate] = candidates[i];
-        uint32_t sessionId = i + 1; // Use 1-based index for session ID
+        std::string sessionId = generateSessionId(key);
+        uint32_t sessionIndex = i + 1; // Use 1-based index for compatibility
+        sessionIdToIndex[sessionId] = sessionIndex;
         
         // Add session to top sessions list
         SessionData sessionData;
-        sessionData.id = sessionId;
+        sessionData.id = sessionIndex;
         sessionData.matchCount = candidate.matchCount;
         
         // Calculate confidence
@@ -926,48 +1010,27 @@ bool SignatureMatcher::saveComparisonData(const VisualizationData& sourceData,
         sessionData.mediaTitle = candidate.targetSignatureInfo->mediaItem->title();
         topSessions.push_back(sessionData);
         
-        // Create a map of hashes to matched fingerprint points in source data
-        std::unordered_map<uint32_t, std::vector<size_t>> sourceHashToIndexMap;
-        for (size_t idx = 0; idx < sourceData.fingerprintPoints.size(); ++idx) {
-            uint32_t hash = std::get<2>(sourceData.fingerprintPoints[idx]);
-            sourceHashToIndexMap[hash].push_back(idx);
-        }
-        
-        // For each match info in this candidate
-        for (const auto& matchInfo : candidate.matchInfos) {
-            // Extract the hash from the string format (e.g., " 0x12345")
-            std::string hashStr = matchInfo.hash;
-            uint32_t hash = 0;
-            
-            // Parse the hash value from string format
-            if (hashStr.find("0x") != std::string::npos) {
-                std::stringstream ss;
-                ss << std::hex << hashStr.substr(hashStr.find("0x") + 2);
-                ss >> hash;
-            }
-            
-            // Add to hashToSessionMap
-            hashToSessionMap[hash] = sessionId;
-            
-            // Add this point to the query data with session ID
-            for (const auto& point : visualizationData_.matchedPoints) {
-                if (std::get<2>(point) == hash) {
-                    // Create a new point with session ID
-                    sessionQueryData.matchedPoints.push_back(
-                        std::make_tuple(std::get<0>(point), std::get<1>(point), std::get<2>(point), sessionId)
-                    );
+        // 基于allSessionsHistory_中的该session数据重新生成匹配点
+        auto historyIt = allSessionsHistory_.find(sessionId);
+        if (historyIt != allSessionsHistory_.end()) {
+            for (const auto& matchInfo : historyIt->second) {
+                // 解析hash字符串
+                uint32_t hash = 0;
+                if (matchInfo.hash.find("0x") != std::string::npos) {
+                    std::stringstream ss;
+                    ss << std::hex << matchInfo.hash.substr(matchInfo.hash.find("0x") + 2);
+                    ss >> hash;
                 }
-            }
-            
-            // Find and add corresponding points in source data
-            auto it = sourceHashToIndexMap.find(hash);
-            if (it != sourceHashToIndexMap.end()) {
-                for (size_t idx : it->second) {
-                    const auto& sourcePoint = sourceData.fingerprintPoints[idx];
-                    enhancedSourceData.matchedPoints.push_back(
-                        std::make_tuple(std::get<0>(sourcePoint), std::get<1>(sourcePoint), std::get<2>(sourcePoint), sessionId)
-                    );
-                }
+                
+                // 直接使用DebugMatchInfo中的查询点信息生成查询数据匹配点
+                sessionQueryData.matchedPoints.push_back(
+                    std::make_tuple(matchInfo.queryFrequency, matchInfo.queryTime, hash, sessionIndex)
+                );
+                
+                // 直接使用DebugMatchInfo中的源点信息生成源数据匹配点
+                enhancedSourceData.matchedPoints.push_back(
+                    std::make_tuple(matchInfo.sourceFrequency, matchInfo.targetTime, hash, sessionIndex)
+                );
             }
         }
     }
@@ -1090,6 +1153,14 @@ CandidateSessionKey SignatureMatcher::tryMergeWithExistingSessions(
     }
     
     return CandidateSessionKey{0, nullptr}; // 没有找到可合并的session
+}
+
+// 生成sessionKey的字符串表示，用于可视化session ID
+std::string SignatureMatcher::generateSessionId(const CandidateSessionKey& sessionKey) const {
+    // 使用offset和signature地址拼接生成唯一ID
+    std::stringstream ss;
+    ss << "s_" << sessionKey.offset << "_" << reinterpret_cast<uintptr_t>(sessionKey.signature);
+    return ss.str();
 }
 
 } // namespace afp 

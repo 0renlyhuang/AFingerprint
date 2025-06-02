@@ -13,6 +13,21 @@
 #include "matcher/matcher.h"
 namespace fs = std::filesystem;
 
+// 可视化文件夹名称
+const std::string VISUALIZATION_DIR = "visualization_file_o";
+
+// 创建可视化文件夹并返回完整路径
+std::string createVisualizationPath(const std::string& filename) {
+    // 创建可视化文件夹（如果不存在）
+    if (!fs::exists(VISUALIZATION_DIR)) {
+        fs::create_directories(VISUALIZATION_DIR);
+        std::cout << "Created visualization directory: " << VISUALIZATION_DIR << std::endl;
+    }
+    
+    // 返回完整路径
+    return fs::path(VISUALIZATION_DIR) / filename;
+}
+
 // 默认音频格式：16位有符号整数，小端序，单声道，44100Hz
 const afp::PCMFormat defaultFormat(44100, 
                                  afp::SampleFormat::S16,
@@ -126,8 +141,9 @@ void generateFingerprints(const std::string& algorithm,
             auto* generatorImpl = dynamic_cast<afp::SignatureGenerator*>(generator.get());
             if (generatorImpl) {
                 std::string vizFilename = fs::path(inputFile).stem().string() + "_fingerprint.json";
-                std::cout << "Generating visualization: " << vizFilename << std::endl;
-                generatorImpl->saveVisualization(vizFilename);
+                std::string vizPath = createVisualizationPath(vizFilename);
+                std::cout << "Generating visualization: " << vizPath << std::endl;
+                generatorImpl->saveVisualization(vizPath);
             }
         }
     }
@@ -195,7 +211,8 @@ void matchFingerprints(const std::string& algorithm,
             
             // Save source visualization
             std::string sourceVizFilename = catalog->mediaItems()[i].title() + "_source.json";
-            afp::Visualizer::saveVisualization(sourceVizData, sourceVizFilename);
+            std::string sourceVizPath = createVisualizationPath(sourceVizFilename);
+            afp::Visualizer::saveVisualization(sourceVizData, sourceVizPath);
         }
     }
 
@@ -291,15 +308,16 @@ void matchFingerprints(const std::string& algorithm,
             if (matcherImpl) {
                 // Generate query visualization
                 std::string queryVizFilename = fs::path(inputFile).stem().string() + "_query.json";
+                std::string queryVizPath = createVisualizationPath(queryVizFilename);
                 matcherImpl->signatureMatcher_->setAudioFilePath(inputFileAbsPath);
-                matcherImpl->signatureMatcher_->saveVisualization(queryVizFilename);
+                matcherImpl->signatureMatcher_->saveVisualization(queryVizPath);
                 
                 // Generate comparison visualization if source data is available
                 if (sourceVizEnabled) {
                     std::string comparisonBasename = "comparison_" + fs::path(inputFile).stem().string() + "_vs_source";
-                    std::string sourceFilename = comparisonBasename + "_source.json";
-                    std::string queryFilename = comparisonBasename + "_query.json";
-                    std::string sessionsFilename = comparisonBasename + "_sessions.json";
+                    std::string sourceFilename = createVisualizationPath(comparisonBasename + "_source.json");
+                    std::string queryFilename = createVisualizationPath(comparisonBasename + "_query.json");
+                    std::string sessionsFilename = createVisualizationPath(comparisonBasename + "_sessions.json");
                     
                     // 设置查询数据的音频文件路径
                     afp::VisualizationData queryVizData = matcherImpl->signatureMatcher_->getVisualizationData();
@@ -315,7 +333,7 @@ void matchFingerprints(const std::string& algorithm,
                     // 保存会话数据以供交互式可视化使用
                     matcherImpl->signatureMatcher_->saveSessionsData(sessionsFilename);
                     
-                    std::cout << "Visualization data saved with audio path: " << inputFileAbsPath << std::endl;
+                    std::cout << "Visualization data saved to " << VISUALIZATION_DIR << " with audio path: " << inputFileAbsPath << std::endl;
                 }
             }
         }

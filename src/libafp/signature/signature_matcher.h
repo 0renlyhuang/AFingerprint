@@ -156,7 +156,7 @@ private:
 
     struct TargetSignatureInfo2 {
         const MediaItem *mediaItem;
-        double hashTimestamp;
+        const SignaturePoint *signaturePoint;  // 直接存储SignaturePoint指针，包含完整信息
         const std::vector<SignaturePoint> *signature;
     };
     std::unordered_map<uint32_t, std::vector<TargetSignatureInfo2>> hash2TargetSignaturesInfoMap_;  // 哈希值到时间戳的映射
@@ -176,6 +176,12 @@ private:
         double queryTime;
         double targetTime;
         int32_t offset;
+        // 查询点的完整信息
+        uint32_t queryFrequency;    
+        uint32_t queryAmplitude;    
+        // 源点的完整信息（来自目标签名数据库）
+        uint32_t sourceFrequency;   
+        uint32_t sourceAmplitude;   
     };
     struct MatchingCandidate;
     std::unordered_map<size_t, std::vector<std::pair<size_t, DebugMatchInfo>>> findDuplicateHashes(const std::vector<std::pair<CandidateSessionKey, MatchingCandidate>>& candidates);
@@ -199,6 +205,10 @@ private:
     // Visualization data
     bool collectVisualizationData_ = false;
     VisualizationData visualizationData_;
+    
+    // 存储整个过程中所有session的历史数据，用于可视化
+    // Key: sessionKey的字符串表示, Value: 该session的所有匹配信息
+    std::unordered_map<std::string, std::vector<DebugMatchInfo>> allSessionsHistory_;
     
     // Helper method for merging sessions with similar time offsets
     void mergeSimilarSessions();
@@ -227,6 +237,9 @@ private:
         const MatchingCandidate& newCandidate, 
         const std::vector<SignaturePoint>* signature, 
         double currentTimestamp) const;
+    
+    // 生成sessionKey的字符串表示，用于可视化session ID
+    std::string generateSessionId(const CandidateSessionKey& sessionKey) const;
 };
 
 } // namespace afp 
