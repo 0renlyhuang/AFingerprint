@@ -104,6 +104,7 @@ SignatureMatcher::SignatureMatcher(std::shared_ptr<ICatalog> catalog, std::share
     , matchExpireTime_(config->getMatchingConfig().matchExpireTime)
     , minConfidenceThreshold_(config->getMatchingConfig().minConfidenceThreshold)
     , minMatchesRequired_(config->getMatchingConfig().minMatchesRequired)
+    , minMatchesUniqueTimestampRequired_(config->getMatchingConfig().minMatchesUniqueTimestampRequired)
     , offsetTolerance_(config->getMatchingConfig().offsetTolerance)
     , matchResults_(std::vector<MatchResult>(config->getMatchingConfig().maxCandidates))
     , expiredCandidateSessionKeys_(std::vector<CandidateSessionKey>(config->getMatchingConfig().maxCandidates)) {
@@ -240,6 +241,13 @@ void SignatureMatcher::processQuerySignature(
                 if (queryPoint.timestamp >= candidate.lastMatchTime || true) {  // todo: 当前不考虑时间戳，直接更新match count
                     candidate.matchCount += 1;
                     
+                    // 更新unique时间戳
+                    double roundedTime = std::round(queryPoint.timestamp * 100.0) / 100.0;
+                    bool isNewTimestamp = candidate.uniqueTimestamps.insert(roundedTime).second;
+                    if (isNewTimestamp) {
+                        candidate.uniqueTimestampCount += 1;
+                    }
+                    
                     // 直接使用targetSignaturesInfo.signaturePoint中的完整信息
                     const SignaturePoint* sourcePoint = targetSignaturesInfo.signaturePoint;
                     
@@ -259,6 +267,18 @@ void SignatureMatcher::processQuerySignature(
                     // 累积实际偏移
                     candidate.actualOffsetSum += actualOffset;
                     candidate.offsetCount += 1;
+
+                    // std::cout << "rrr update candidate: " << queryPointprint << " hash: 0x" << std::hex << queryPoint.hash << std::dec 
+                    // << ", timestamp: " << queryPoint.timestamp 
+                    // << ", targetSignaturesInfo.signaturePoint->timestamp: " << targetSignaturesInfo.signaturePoint->timestamp 
+                    // << ", actualOffset: " << actualOffset 
+                    // << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
+                    // << ", matchcount: " << candidate.matchCount 
+                    // << ", uniqueTimestampCount: " << candidate.uniqueTimestampCount
+                    // << ", actualOffsetSum: " << candidate.actualOffsetSum
+                    // << ", offsetCount: " << candidate.offsetCount
+                    // << ", averageOffset: " << candidate.actualOffsetSum / candidate.offsetCount 
+                    // << std::endl;
 
                     // 存储到session历史记录中，用于可视化
                     if (collectVisualizationData_) {
@@ -293,6 +313,10 @@ void SignatureMatcher::processQuerySignature(
                 // 查找源SignaturePoint以获取完整信息（源点就是目标签名中的匹配点）
                 const SignaturePoint* sourcePoint = targetSignaturesInfo.signaturePoint;
                 
+                // 初始化unique时间戳
+                double roundedTime = std::round(queryPoint.timestamp * 100.0) / 100.0;
+                std::unordered_set<double> initialUniqueTimestamps = {roundedTime};
+                
                 MatchingCandidate newCandidate = {
                     .targetSignatureInfo = &targetSignaturesInfo,
                     .maxPossibleMatches = maxPossibleMatches,
@@ -311,6 +335,8 @@ void SignatureMatcher::processQuerySignature(
                     .offset = actualOffset,
                     .actualOffsetSum = actualOffset,  // 初始化累积偏移
                     .offsetCount = 1,                 // 初始化偏移计数
+                    .uniqueTimestampCount = 1,        // 初始化unique时间戳数量
+                    .uniqueTimestamps = std::move(initialUniqueTimestamps), // 初始化unique时间戳集合
                     .isMatchCountChanged = true,
                     .isNotified = false,
                 };
@@ -412,6 +438,7 @@ void SignatureMatcher::processQuerySignature(
                         << ", actualOffset: " << actualOffset 
                         << ", sessionKey: " << hash_seesion_key_func(sessionKey) 
                         << ", matchcount: " << newCandidate.matchCount 
+                        << ", uniqueTimestampCount: " << newCandidate.uniqueTimestampCount
                         << ", actualOffsetSum: " << newCandidate.actualOffsetSum
                         << ", offsetCount: " << newCandidate.offsetCount
                         << ", averageOffset: " << newCandidate.actualOffsetSum / newCandidate.offsetCount 
@@ -479,6 +506,7 @@ void SignatureMatcher::processQuerySignature(
                       << candidate.targetSignatureInfo->mediaItem->title()
                       << ", Offset: " << key.offset
                       << ", MatchCount: " << candidate.matchCount
+                      << ", uniqueTimestampCount: " << candidate.uniqueTimestampCount
                       << ", MaxPossible: " << candidate.maxPossibleMatches
                       << ", Confidence: " << evaluateConfidenceFunc(candidate)
                       << ", Score: " << std::fixed << std::setprecision(4) << sessionScore
@@ -500,19 +528,30 @@ void SignatureMatcher::processQuerySignature(
             const auto confidence = evaluateConfidenceFunc(candidate);
             // confidence >= minConfidenceThreshold_ &&  
             if (candidate.matchCount >= minMatchesRequired_) {
-                // 计算平均偏移
-                double averageOffset = candidate.actualOffsetSum / candidate.offsetCount;
-                
-                auto matchResult = MatchResult{
-                    .mediaItem = candidate.targetSignatureInfo->mediaItem,
-                    .offset = averageOffset,  // 使用平均偏移（秒）
-                    .confidence = confidence,
-                    .matchedPoints = {},
-                    .matchCount = candidate.matchCount,
-                    .id = 0,
-                };
-                matchResults_.push_back(matchResult);
-                session2CandidateMap_[sessionKey].isNotified = true;
+                // 检查是否满足unique时间戳数量要求
+                if (candidate.uniqueTimestampCount >= minMatchesUniqueTimestampRequired_) {
+                    // 计算平均偏移
+                    double averageOffset = candidate.actualOffsetSum / candidate.offsetCount;
+                    
+                    auto matchResult = MatchResult{
+                        .mediaItem = candidate.targetSignatureInfo->mediaItem,
+                        .offset = averageOffset,  // 使用平均偏移（秒）
+                        .confidence = confidence,
+                        .matchedPoints = {},
+                        .matchCount = candidate.matchCount,
+                        .id = 0,
+                    };
+                    matchResults_.push_back(matchResult);
+                    session2CandidateMap_[sessionKey].isNotified = true;
+                    
+                    std::cout << "Match accepted: matchCount=" << candidate.matchCount 
+                              << ", uniqueTimestamps=" << candidate.uniqueTimestampCount 
+                              << ", confidence=" << confidence << std::endl;
+                } else {
+                    std::cout << "Match rejected due to insufficient unique timestamps: matchCount=" 
+                              << candidate.matchCount << ", uniqueTimestamps=" << candidate.uniqueTimestampCount 
+                              << ", required=" << minMatchesUniqueTimestampRequired_ << std::endl;
+                }
             }
         }
 
@@ -590,13 +629,6 @@ void SignatureMatcher::mergeSimilarSessions() {
             
             double primaryAvgOffset = static_cast<double>(primaryCandidate.actualOffsetSum) / primaryCandidate.offsetCount;
             
-            // 添加合理性检查：平均偏移应该在合理范围内（例如±10秒 = ±10000毫秒）
-            if (std::abs(primaryAvgOffset) > 10000.0) {
-                std::cerr << "Warning: Unreasonable primary avg offset: " << primaryAvgOffset 
-                          << " (actualOffsetSum: " << primaryCandidate.actualOffsetSum 
-                          << ", offsetCount: " << primaryCandidate.offsetCount << ")" << std::endl;
-                continue;
-            }
             
             // 查找可以与当前session合并的其他session
             for (size_t j = i + 1; j < sessionKeys.size(); ++j) {
@@ -614,13 +646,6 @@ void SignatureMatcher::mergeSimilarSessions() {
                 
                 double secondaryAvgOffset = static_cast<double>(secondaryCandidate.actualOffsetSum) / secondaryCandidate.offsetCount;
                 
-                // 添加合理性检查
-                if (std::abs(secondaryAvgOffset) > 10000.0) {
-                    std::cerr << "Warning: Unreasonable secondary avg offset: " << secondaryAvgOffset 
-                              << " (actualOffsetSum: " << secondaryCandidate.actualOffsetSum 
-                              << ", offsetCount: " << secondaryCandidate.offsetCount << ")" << std::endl;
-                    continue;
-                }
                 
                 // 检查两个session的平均偏移是否在容错范围内
                 double offsetDifference = std::abs(primaryAvgOffset - secondaryAvgOffset);
@@ -632,17 +657,17 @@ void SignatureMatcher::mergeSimilarSessions() {
                     size_t newOffsetCount = primaryCandidate.offsetCount + secondaryCandidate.offsetCount;
                     double newAvgOffset = static_cast<double>(newOffsetSum) / newOffsetCount;
                     
-                    // 检查合并后的平均偏移是否合理
-                    if (std::abs(newAvgOffset) > 10000.0) {
-                        std::cerr << "Warning: Merged session would have unreasonable avg offset: " 
-                                  << newAvgOffset << ", skipping merge" << std::endl;
-                        continue;
-                    }
                     
                     // 合并session
                     primaryCandidate.matchCount += secondaryCandidate.matchCount;
                     primaryCandidate.actualOffsetSum = newOffsetSum;
                     primaryCandidate.offsetCount = newOffsetCount;
+                    
+                    // 合并unique时间戳
+                    for (const auto& timestamp : secondaryCandidate.uniqueTimestamps) {
+                        primaryCandidate.uniqueTimestamps.insert(timestamp);
+                    }
+                    primaryCandidate.uniqueTimestampCount = primaryCandidate.uniqueTimestamps.size();
                     
                     // 合并匹配信息
                     primaryCandidate.matchInfos.insert(
@@ -666,6 +691,7 @@ void SignatureMatcher::mergeSimilarSessions() {
                               << "ms, secondary avg offset = " << secondaryAvgOffset 
                               << "ms, new avg offset = " << newAvgOffset
                               << "ms, new match count = " << primaryCandidate.matchCount 
+                              << ", new unique timestamp count = " << primaryCandidate.uniqueTimestampCount
                               << ", tolerance = " << toleranceMs << "ms" << std::endl;
                 }
             }
@@ -1080,12 +1106,6 @@ CandidateSessionKey SignatureMatcher::tryMergeWithExistingSessions(
     
     double newAvgOffset = static_cast<double>(newCandidate.actualOffsetSum) / newCandidate.offsetCount;
     
-    // 合理性检查：平均偏移应该在合理范围内
-    if (std::abs(newAvgOffset) > 10000.0) {
-        std::cerr << "Warning: New candidate has unreasonable avg offset: " << newAvgOffset << std::endl;
-        return CandidateSessionKey{0, nullptr};
-    }
-    
     double toleranceMs = offsetTolerance_ * 1000.0;
     
     // 查找可以合并的现有session
@@ -1100,12 +1120,6 @@ CandidateSessionKey SignatureMatcher::tryMergeWithExistingSessions(
         
         double existingAvgOffset = static_cast<double>(existingCandidate.actualOffsetSum) / existingCandidate.offsetCount;
         
-        // 合理性检查
-        if (std::abs(existingAvgOffset) > 10000.0) {
-            std::cerr << "Warning: Existing candidate has unreasonable avg offset: " << existingAvgOffset << std::endl;
-            continue;
-        }
-        
         // 检查两个session的平均偏移是否在容错范围内
         double offsetDifference = std::abs(newAvgOffset - existingAvgOffset);
         
@@ -1115,17 +1129,16 @@ CandidateSessionKey SignatureMatcher::tryMergeWithExistingSessions(
             size_t mergedOffsetCount = existingCandidate.offsetCount + newCandidate.offsetCount;
             double mergedAvgOffset = static_cast<double>(mergedOffsetSum) / mergedOffsetCount;
             
-            // 检查合并后的平均偏移是否合理
-            if (std::abs(mergedAvgOffset) > 10000.0) {
-                std::cerr << "Warning: Merged session would have unreasonable avg offset: " 
-                          << mergedAvgOffset << ", skipping merge" << std::endl;
-                continue;
-            }
-            
             // 执行合并
             existingCandidate.matchCount += newCandidate.matchCount;
             existingCandidate.actualOffsetSum = mergedOffsetSum;
             existingCandidate.offsetCount = mergedOffsetCount;
+            
+            // 合并unique时间戳
+            for (const auto& timestamp : newCandidate.uniqueTimestamps) {
+                existingCandidate.uniqueTimestamps.insert(timestamp);
+            }
+            existingCandidate.uniqueTimestampCount = existingCandidate.uniqueTimestamps.size();
             
             // 合并匹配信息
             existingCandidate.matchInfos.insert(
@@ -1146,6 +1159,7 @@ CandidateSessionKey SignatureMatcher::tryMergeWithExistingSessions(
                       << "ms, existing avg offset = " << existingAvgOffset 
                       << "ms, merged avg offset = " << mergedAvgOffset
                       << "ms, merged match count = " << existingCandidate.matchCount 
+                      << ", new unique timestamp count = " << existingCandidate.uniqueTimestampCount
                       << ", tolerance = " << toleranceMs << "ms" << std::endl;
             
             return existingKey; // 返回被合并到的session key

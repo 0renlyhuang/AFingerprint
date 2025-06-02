@@ -60,6 +60,7 @@ struct MatchingConfig {
     double matchExpireTime;       // 匹配过期时间 (秒)
     float minConfidenceThreshold; // 最小置信度阈值
     size_t minMatchesRequired;    // 最小匹配点数要求
+    size_t minMatchesUniqueTimestampRequired; // 最小unique时间戳数量要求
     double offsetTolerance;       // 时间偏移容忍度 (秒)
 };
 

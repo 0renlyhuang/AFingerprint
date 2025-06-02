@@ -2,6 +2,7 @@
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <functional>
 #include <memory>
 #include <string>
@@ -167,6 +168,7 @@ private:
     double matchExpireTime_;       // 匹配过期时间 (秒)
     float minConfidenceThreshold_; // 最小置信度阈值
     size_t minMatchesRequired_;    // 最小匹配点数要求
+    size_t minMatchesUniqueTimestampRequired_; // 最小unique时间戳数量要求
     double offsetTolerance_;       // 时间偏移容忍度 (秒)
 
     std::unordered_map< const std::vector<SignaturePoint> *, size_t> signature2SessionCnt_;
@@ -195,6 +197,8 @@ private:
         int32_t offset;                     // 时间偏移（毫秒，用于session key）
         int64_t actualOffsetSum;             // 累积的实际时间偏移（毫秒），使用int64_t防止溢出
         int64_t offsetCount;                 // 偏移计数，用于计算平均值
+        size_t uniqueTimestampCount;        // unique时间戳数量
+        std::unordered_set<double> uniqueTimestamps; // unique时间戳集合（保留2位小数精度）
         bool isMatchCountChanged;           // 是否匹配点数量发生变化
         bool isNotified;                    // 是否已通知
     };
