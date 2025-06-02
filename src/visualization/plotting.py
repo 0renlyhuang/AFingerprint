@@ -39,7 +39,7 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
     print(f"调整窗口大小: {fig_width:.1f}x{fig_height:.1f} inches (屏幕: {screen_width}x{screen_height})")
     
     # Create figure with room for audio controls at the bottom
-    grid = gridspec.GridSpec(2, 1, height_ratios=[4, 1] if audio_player and audio_player.data is not None else [1, 0])
+    grid = gridspec.GridSpec(2, 1, height_ratios=[12, 1] if audio_player and audio_player.data is not None else [1, 0])
     fig = plt.figure(figsize=(fig_width, fig_height))
     ax = fig.add_subplot(grid[0])
     
@@ -61,14 +61,25 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
     ax.set_ylabel('Frequency (Hz)')
     ax.set_ylim(0, 5000)  # Limit frequency display range
     ax.grid(True, alpha=0.3)
-    # 将图例移动到图表右侧外部，使用更紧凑的样式
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, 
-              frameon=True, fancybox=True, shadow=True, ncol=1)
+    # 将图例移动到图表右侧外部，使用更紧凑的样式，解决文字重叠问题
+    legend = ax.legend(bbox_to_anchor=(1.10, 1), loc='upper left', fontsize=6, 
+              frameon=True, fancybox=True, shadow=True, ncol=1, 
+              borderaxespad=0.5, labelspacing=1.0, handletextpad=0.5)
+    # 设置图例行间距，解决文字重叠问题
+    legend.set_title(None)
+    plt.setp(legend.get_texts(), fontsize=6)
+    for t in legend.get_texts():
+        t.set_fontsize(6)
+    # 调整图例内部间距
+    legend.get_frame().set_facecolor('white')
+    legend.get_frame().set_alpha(0.9)
+    # 设置图例条目之间的垂直间距
+    legend._legend_box.align = "left"
     
     # Add a colorbar for amplitude visualization
     amplitude_info = detect_and_normalize_amplitude_values(data['allPeaks'])
     amplitude_label = "Amplitude (dB)" if amplitude_info['is_absolute_log_scale'] else "Amplitude"
-    cbar = fig.colorbar(peaks_scatter, ax=ax, label=amplitude_label, pad=0.01)
+    cbar = fig.colorbar(peaks_scatter, ax=ax, label=amplitude_label, pad=0.02, fraction=0.046)
     cbar.set_label(amplitude_label)
     
     # Calculate max time and set up audio controls
@@ -92,8 +103,8 @@ def create_interactive_plot(data, plot_type='extraction', audio_player=None):
     # Add window event handlers
     _add_window_event_handlers(fig, audio_player)
     
-    # 调整布局，为右侧图例留出空间（右边界从1.0调整为0.85）
-    plt.tight_layout(rect=[0, 0, 0.85, 1])
+    # 调整布局，扩大图表宽度，充分利用空间（右边界调整为0.85）
+    plt.tight_layout(rect=[0, 0, 1, 1])
     
     return fig, ax
 
@@ -116,8 +127,8 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
     
     if has_any_audio:
         # Create a figure with space for audio controls at the bottom
-        # 增加控制面板的高度比例，减少底部空白
-        grid = gridspec.GridSpec(3, 1, height_ratios=[3.5, 3.5, 2.5])
+        # 优化控制面板的高度比例，避免过高的控制区域
+        grid = gridspec.GridSpec(3, 1, height_ratios=[3.5, 3.5, 1.8])
         fig = plt.figure(figsize=(fig_width, fig_height))
         ax1 = fig.add_subplot(grid[0])  # Source plot
         ax2 = fig.add_subplot(grid[1])  # Query plot (removed sharex=ax1)
@@ -144,8 +155,8 @@ def create_comparison_plot(source_data, query_data, top_sessions=None, source_au
         print(f"设置源图横轴范围: 0 到 {source_max_time:.2f}s")
         print(f"设置查询图横轴范围: 0 到 {query_max_time:.2f}s")
     
-    # 调整布局，为右侧图例留出空间（右边界从1.0调整为0.85），同时保持底部空间
-    plt.tight_layout(rect=[0, 0.15, 0.85, 1])  # 减少底部边距并为右侧图例留空间
+    # 调整布局，扩大图表宽度，充分利用空间（右边界调整为0.85）
+    plt.tight_layout(rect=[0, 0, 1, 1])
     
     # Add hover event handling and connection lines
     _setup_comparison_interactions(fig, ax1, ax2, source_data, query_data, source_scatter_objs, query_scatter_objs)
@@ -319,13 +330,24 @@ def _plot_source_data(ax1, source_data):
     ax1.set_ylabel('Frequency (Hz)')
     ax1.set_ylim(0, 5000)
     ax1.grid(True, alpha=0.3)
-    # 将图例移动到图表右侧外部，使用更紧凑的样式
-    ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, 
-              frameon=True, fancybox=True, shadow=True, ncol=1)
+    # 将图例移动到图表右侧外部，使用更紧凑的样式，解决文字重叠问题
+    legend1 = ax1.legend(bbox_to_anchor=(1.10, 1), loc='upper left', fontsize=6, 
+              frameon=True, fancybox=True, shadow=True, ncol=1,
+              borderaxespad=0.5, labelspacing=1.0, handletextpad=0.5)
+    # 设置图例行间距，解决文字重叠问题
+    legend1.set_title(None)
+    plt.setp(legend1.get_texts(), fontsize=6)
+    for t in legend1.get_texts():
+        t.set_fontsize(6)
+    # 调整图例内部间距
+    legend1.get_frame().set_facecolor('white')
+    legend1.get_frame().set_alpha(0.9)
+    # 设置图例条目之间的垂直间距
+    legend1._legend_box.align = "left"
     
     # Add colorbar for source
     source_amplitude_label = "Amplitude (dB)" if source_amplitude_info['is_absolute_log_scale'] else "Amplitude"
-    cbar1 = plt.gcf().colorbar(source_peaks_scatter, ax=ax1, label=source_amplitude_label, pad=0.01)
+    cbar1 = plt.gcf().colorbar(source_peaks_scatter, ax=ax1, label=source_amplitude_label, pad=0.02, fraction=0.046)
     
     return source_peaks_scatter, source_fp_scatter, source_matched_scatter, source_session_scatters
 
@@ -395,13 +417,24 @@ def _plot_query_data(ax2, query_data):
     ax2.set_ylabel('Frequency (Hz)')
     ax2.set_ylim(0, 5000)
     ax2.grid(True, alpha=0.3)
-    # 将图例移动到图表右侧外部，使用更紧凑的样式
-    ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8, 
-              frameon=True, fancybox=True, shadow=True, ncol=1)
+    # 将图例移动到图表右侧外部，使用更紧凑的样式，解决文字重叠问题
+    legend2 = ax2.legend(bbox_to_anchor=(1.10, 1), loc='upper left', fontsize=6, 
+              frameon=True, fancybox=True, shadow=True, ncol=1,
+              borderaxespad=0.5, labelspacing=1.0, handletextpad=0.5)
+    # 设置图例行间距，解决文字重叠问题
+    legend2.set_title(None)
+    plt.setp(legend2.get_texts(), fontsize=6)
+    for t in legend2.get_texts():
+        t.set_fontsize(6)
+    # 调整图例内部间距
+    legend2.get_frame().set_facecolor('white')
+    legend2.get_frame().set_alpha(0.9)
+    # 设置图例条目之间的垂直间距
+    legend2._legend_box.align = "left"
     
     # Add colorbar for query
     query_amplitude_label = "Amplitude (dB)" if query_amplitude_info['is_absolute_log_scale'] else "Amplitude"
-    cbar2 = plt.gcf().colorbar(query_peaks_scatter, ax=ax2, label=query_amplitude_label, pad=0.01)
+    cbar2 = plt.gcf().colorbar(query_peaks_scatter, ax=ax2, label=query_amplitude_label, pad=0.02, fraction=0.046)
     
     return query_peaks_scatter, query_fp_scatter, query_matched_scatter, query_session_scatters
 

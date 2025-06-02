@@ -281,5 +281,5 @@ if __name__ == "__main__":
         traceback.print_exc()
     finally:
         # 确保在程序退出时释放资源
-        clean_up()
+        clean_up() 
 

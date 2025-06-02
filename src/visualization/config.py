@@ -12,6 +12,13 @@ plt.rcParams['figure.raise_window'] = True
 plt.rcParams['figure.autolayout'] = True
 plt.rcParams['tk.window_focus'] = True  # 帮助解决Tkinter焦点问题
 
+# 设置图例参数，增加行间距，防止文字重叠
+plt.rcParams['legend.borderaxespad'] = 0.5
+plt.rcParams['legend.columnspacing'] = 2.0
+plt.rcParams['legend.handlelength'] = 2.0
+plt.rcParams['legend.handletextpad'] = 0.8
+plt.rcParams['legend.labelspacing'] = 0.8  # 增加标签之间的垂直间距
+
 # 音频播放支持检测
 try:
     import soundfile as sf
