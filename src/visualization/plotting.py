@@ -247,7 +247,7 @@ def _plot_matching_data(ax, data):
                 scatter = ax.scatter([point[1] for point in points], 
                                     [point[0] for point in points], 
                                     color=color, s=150, alpha=1.0, marker='*',  # 统一使用五角星
-                                    edgecolors='black', linewidth=2,
+                                    edgecolors='black', linewidth=1,
                                     label=f'Session {session_id} Matches')
                 session_scatters[session_id] = scatter
                 
@@ -257,7 +257,7 @@ def _plot_matching_data(ax, data):
             matched_scatter = ax.scatter([point[1] for point in data['matchedPoints']], 
                                         [point[0] for point in data['matchedPoints']], 
                                         color='orange', s=150, alpha=1.0, marker='*',  # 统一使用五角星
-                                        edgecolors='black', linewidth=2,
+                                        edgecolors='black', linewidth=1,
                                         label='Matched Points')
     
     # Set title and labels
@@ -305,14 +305,15 @@ def _plot_source_data(ax1, source_data):
             # 为每个session使用不同的颜色，所有都用五角星标记
             session_colors = ['red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
             
-            for i, (session_id, points) in enumerate(session_points.items()):
-                color = session_colors[i % len(session_colors)]
+            for session_id, points in session_points.items():
+                # 使用session_id直接分配颜色，确保与连接线颜色一致
+                color = session_colors[session_id % len(session_colors)]
                 
                 # 绘制五角星标记的匹配点
                 scatter = ax1.scatter([point[1] for point in points], 
                                     [point[0] for point in points], 
                                     color=color, s=150, alpha=1.0, marker='*',  # 统一使用五角星
-                                    edgecolors='black', linewidth=2,
+                                    edgecolors='black', linewidth=1,
                                     label=f'Source Session {session_id}')
                 source_session_scatters[session_id] = scatter
                 
@@ -322,7 +323,7 @@ def _plot_source_data(ax1, source_data):
             source_matched_scatter = ax1.scatter([point[1] for point in source_data['matchedPoints']], 
                                                [point[0] for point in source_data['matchedPoints']], 
                                                color='red', s=150, alpha=1.0, marker='*',  # 统一使用五角星
-                                               edgecolors='black', linewidth=2,
+                                               edgecolors='black', linewidth=1,
                                                label='Source Matches')
     
     ax1.set_title(f"Source: {source_data['title']}")
@@ -391,15 +392,16 @@ def _plot_query_data(ax2, query_data):
             # 为每个session使用不同的颜色，所有都用五角星标记（与源数据保持一致）
             session_colors = ['red', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
             
-            for i, (session_id, points) in enumerate(session_points.items()):
-                color = session_colors[i % len(session_colors)]
+            for session_id, points in session_points.items():
+                # 使用session_id直接分配颜色，确保与连接线颜色一致
+                color = session_colors[session_id % len(session_colors)]
                 
                 match_count = len(points)
                 # 绘制五角星标记的匹配点
                 scatter = ax2.scatter([point[1] for point in points], 
                                     [point[0] for point in points], 
                                     color=color, s=150, alpha=1.0, marker='*',  # 统一使用五角星
-                                    edgecolors='black', linewidth=2,
+                                    edgecolors='black', linewidth=1,
                                     label=f'Query Session {session_id}_{match_count}')
                 query_session_scatters[session_id] = scatter
                 
@@ -409,7 +411,7 @@ def _plot_query_data(ax2, query_data):
             query_matched_scatter = ax2.scatter([point[1] for point in query_data['matchedPoints']], 
                                               [point[0] for point in query_data['matchedPoints']], 
                                               color='red', s=150, alpha=1.0, marker='*',  # 统一使用五角星
-                                              edgecolors='black', linewidth=2,
+                                              edgecolors='black', linewidth=1,
                                               label='Query Matches')
     
     ax2.set_title(f"Query: {query_data['title']}")
