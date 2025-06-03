@@ -18,6 +18,11 @@ private:
     static std::shared_ptr<IPerformanceConfig> createMobileConfig();
     static std::shared_ptr<IPerformanceConfig> createDesktopConfig();
     static std::shared_ptr<IPerformanceConfig> createServerConfig();
+    
+    // 创建生成模式的配置 (优先精度)
+    static std::shared_ptr<IPerformanceConfig> createMobileGenConfig();
+    static std::shared_ptr<IPerformanceConfig> createDesktopGenConfig();
+    static std::shared_ptr<IPerformanceConfig> createServerGenConfig();
 };
 
 } // namespace afp 

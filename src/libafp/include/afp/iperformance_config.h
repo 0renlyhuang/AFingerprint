@@ -7,9 +7,12 @@ namespace afp {
 
 // 平台类型枚举
 enum class PlatformType {
-    Mobile,     // 移动端
-    Desktop,    // PC端
-    Server      // 服务器端
+    Mobile,     // 移动端 - 匹配模式
+    Desktop,    // PC端 - 匹配模式
+    Server,     // 服务器端 - 匹配模式
+    Mobile_Gen, // 移动端 - 生成模式 (优先精度)
+    Desktop_Gen,// PC端 - 生成模式 (优先精度)
+    Server_Gen  // 服务器端 - 生成模式 (优先精度)
 };
 
 // FFT相关配置

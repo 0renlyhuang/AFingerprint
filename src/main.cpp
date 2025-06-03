@@ -77,8 +77,8 @@ void generateFingerprints(const std::string& algorithm,
                          const std::string& outputFile,
                          const std::vector<std::string>& inputFiles,
                          bool generateVisualizations = false) {
-    // 创建配置和目录
-    auto config = afp::interface::createPerformanceConfig(afp::PlatformType::Mobile);
+    // 创建配置和目录 - 生成模式使用高精度配置
+    auto config = afp::interface::createPerformanceConfig(afp::PlatformType::Mobile_Gen);
     auto catalog = afp::interface::createCatalog();
     
     for (const auto& inputFile : inputFiles) {
@@ -163,7 +163,7 @@ void matchFingerprints(const std::string& algorithm,
                       const std::string& catalogFile, 
                       const std::vector<std::string>& inputFiles, 
                       bool generateVisualizations = false) {
-    // 创建配置和目录
+    // 创建配置和目录 - 匹配模式使用平衡配置
     auto config = afp::interface::createPerformanceConfig(afp::PlatformType::Mobile);
     auto catalog = afp::interface::createCatalog();
 
@@ -262,7 +262,8 @@ void matchFingerprints(const std::string& algorithm,
             ss << "匹配: " << result.mediaItem->title()
                << ", 偏移: " << std::fixed << std::setprecision(2) << result.offset << "秒"
                << ", 置信度: " << std::fixed << std::setprecision(3) << result.confidence
-               << ", 匹配点数: " << result.matchCount;
+               << ", 匹配点数: " << result.matchCount
+               << ", 唯一时间戳匹配数: " << result.uniqueTimestampMatchCount;
             
             matchInfo = ss.str();
             
@@ -272,6 +273,7 @@ void matchFingerprints(const std::string& algorithm,
             std::cout << "  Confidence: " << result.confidence << std::endl;
             std::cout << "  Matched points: " << result.matchedPoints.size() << std::endl;
             std::cout << "  Matched count: " << result.matchCount << std::endl;
+            std::cout << "  Unique timestamp match count: " << result.uniqueTimestampMatchCount << std::endl;
             std::cout << std::endl;
         });
 

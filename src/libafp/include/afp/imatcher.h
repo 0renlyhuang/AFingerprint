@@ -12,6 +12,7 @@ struct MatchResult {
     double confidence;       // 匹配置信度
     std::vector<SignaturePoint> matchedPoints;  // 匹配的点
     size_t matchCount;
+    size_t uniqueTimestampMatchCount;
     size_t id;               // 唯一标识符
 };
 
