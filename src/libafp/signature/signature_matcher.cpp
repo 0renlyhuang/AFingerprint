@@ -431,7 +431,7 @@ void SignatureMatcher::processQuerySignature(
                     }
 
                     session2CandidateMap_[sessionKey] = newCandidate;
-                    if (queryPointprint < 300) {
+                    // if (queryPointprint < 300) {
                         std::cout << "rrr add new candidate: " << queryPointprint << " hash: 0x" << std::hex << queryPoint.hash << std::dec 
                         << ", timestamp: " << queryPoint.timestamp 
                         << ", targetSignaturesInfo.signaturePoint->timestamp: " << targetSignaturesInfo.signaturePoint->timestamp 
@@ -443,7 +443,7 @@ void SignatureMatcher::processQuerySignature(
                         << ", offsetCount: " << newCandidate.offsetCount
                         << ", averageOffset: " << newCandidate.actualOffsetSum / newCandidate.offsetCount 
                         << ", score: " << calculateSessionScore(newCandidate, queryPoint.timestamp) << std::endl;
-                    }
+                    // }
                 }
             }  
         }
@@ -539,6 +539,7 @@ void SignatureMatcher::processQuerySignature(
                         .confidence = confidence,
                         .matchedPoints = {},
                         .matchCount = candidate.matchCount,
+                        .uniqueTimestampMatchCount = candidate.uniqueTimestampCount,
                         .id = 0,
                     };
                     matchResults_.push_back(matchResult);
@@ -909,6 +910,12 @@ bool SignatureMatcher::saveVisualization(const std::string& filename) const {
             
             // 直接使用DebugMatchInfo中的信息，不需要手动查询
             // 使用sessionId的hash值作为session标识
+            std::cout << "sessionId: " << sessionId 
+            << ", matchInfo.queryFrequency: " << matchInfo.queryFrequency
+            << ", matchInfo.queryTime: " << matchInfo.queryTime
+            << ", hash: " << hash
+            << ", filename: " << filename
+            << std::endl;
             uint32_t sessionIdHash = std::hash<std::string>{}(sessionId);
             finalVisualizationData.matchedPoints.push_back(
                 std::make_tuple(matchInfo.queryFrequency, matchInfo.queryTime, hash, sessionIdHash)
@@ -988,76 +995,130 @@ bool SignatureMatcher::saveComparisonData(const VisualizationData& sourceData,
     // Create a copy of the source data to enhance with matched points
     VisualizationData enhancedSourceData = sourceData;
     
-    // Extract top sessions for visualizing
-    std::vector<std::pair<CandidateSessionKey, MatchingCandidate>> candidates;
-    for (const auto& pair : session2CandidateMap_) {
-        candidates.push_back(pair);
+    // 基于allSessionsHistory_重新构建session统计信息
+    struct SessionStats {
+        std::string sessionId;
+        size_t matchCount;
+        double confidence;
+        std::string mediaTitle;
+        std::vector<DebugMatchInfo> matchInfos;
+        double lastMatchTime;
+        size_t uniqueTimestampCount;
+        std::unordered_set<double> uniqueTimestamps;
+        size_t maxPossibleMatches = 100; // 默认值，后续会从活跃session中更新
+    };
+    
+    std::vector<SessionStats> allSessionStats;
+    
+    // 首先建立sessionId到活跃MatchingCandidate的映射，用于补充媒体信息
+    std::unordered_map<std::string, const MatchingCandidate*> sessionIdToActiveCandidate;
+    for (const auto& [sessionKey, candidate] : session2CandidateMap_) {
+        std::string sessionId = generateSessionId(sessionKey);
+        sessionIdToActiveCandidate[sessionId] = &candidate;
     }
     
-    // Sort by match count in descending order
-    std::sort(candidates.begin(), candidates.end(), 
-        [](const auto& a, const auto& b) {
-            return a.second.matchCount > b.second.matchCount;
+    // 从allSessionsHistory_中重建每个session的统计信息
+    for (const auto& [sessionId, matchInfos] : allSessionsHistory_) {
+        if (matchInfos.empty()) {
+            continue;
+        }
+        
+        SessionStats stats;
+        stats.sessionId = sessionId;
+        stats.matchCount = matchInfos.size();
+        stats.matchInfos = matchInfos;
+        stats.lastMatchTime = 0.0;
+        
+        // 计算unique时间戳
+        for (const auto& matchInfo : matchInfos) {
+            double roundedTime = std::round(matchInfo.queryTime * 100.0) / 100.0;
+            stats.uniqueTimestamps.insert(roundedTime);
+            stats.lastMatchTime = std::max(stats.lastMatchTime, matchInfo.queryTime);
+        }
+        stats.uniqueTimestampCount = stats.uniqueTimestamps.size();
+        
+        // 尝试从活跃候选中获取媒体信息
+        auto activeIt = sessionIdToActiveCandidate.find(sessionId);
+        if (activeIt != sessionIdToActiveCandidate.end()) {
+            const auto* activeCandidate = activeIt->second;
+            stats.mediaTitle = activeCandidate->targetSignatureInfo->mediaItem->title();
+            stats.maxPossibleMatches = activeCandidate->maxPossibleMatches;
+            
+            // 使用活跃候选的精确置信度计算
+            if (stats.matchCount >= minMatchesRequired_) {
+                if (stats.matchCount >= stats.maxPossibleMatches) {
+                    stats.confidence = 1.0;
+                } else {
+                    stats.confidence = static_cast<double>(stats.matchCount) / stats.maxPossibleMatches;
+                }
+            } else {
+                if (stats.maxPossibleMatches < minMatchesRequired_) {
+                    stats.confidence = static_cast<double>(stats.matchCount) / minMatchesRequired_;
+                } else {
+                    stats.confidence = 0.0;
+                }
+            }
+        } else {
+            // session已过期，尝试从sessionId解析信息或使用默认值
+            stats.mediaTitle = "Expired Session (ID: " + sessionId + ")";
+            
+            // 使用简化的置信度计算
+            if (stats.matchCount >= minMatchesRequired_) {
+                stats.confidence = std::min(1.0, static_cast<double>(stats.matchCount) / 50.0); // 假设50为参考值
+            } else {
+                stats.confidence = 0.0;
+            }
+        }
+        
+        allSessionStats.push_back(stats);
+    }
+    
+    // 按匹配数量降序排序
+    std::sort(allSessionStats.begin(), allSessionStats.end(), 
+        [](const SessionStats& a, const SessionStats& b) {
+            return a.matchCount > b.matchCount;
         });
     
-    // Take top 3 sessions
+    // Take top 5 sessions
     std::vector<SessionData> topSessions;
-    size_t sessionsToInclude = std::min(candidates.size(), size_t(5));
+    size_t sessionsToInclude = std::min(allSessionStats.size(), size_t(5));
     
     // Collect all matched points from query data, assigning session IDs
     VisualizationData sessionQueryData = visualizationData_;
     sessionQueryData.matchedPoints.clear(); // Clear existing matched points
     
-    // 创建从session到序号的映射（用于保持兼容性）
-    std::unordered_map<std::string, uint32_t> sessionIdToIndex;
-    
     // For each top session, assign IDs to the matched points
     for (size_t i = 0; i < sessionsToInclude; ++i) {
-        const auto& [key, candidate] = candidates[i];
-        std::string sessionId = generateSessionId(key);
+        const auto& sessionStats = allSessionStats[i];
         uint32_t sessionIndex = i + 1; // Use 1-based index for compatibility
-        sessionIdToIndex[sessionId] = sessionIndex;
         
         // Add session to top sessions list
         SessionData sessionData;
         sessionData.id = sessionIndex;
-        sessionData.matchCount = candidate.matchCount;
-        
-        // Calculate confidence
-        double confidence = 0.0;
-        if (candidate.matchCount >= minMatchesRequired_) {
-            if (candidate.matchCount >= candidate.maxPossibleMatches) {
-                confidence = 1.0;
-            } else {
-                confidence = static_cast<double>(candidate.matchCount) / candidate.maxPossibleMatches;
-            }
-        }
-        sessionData.confidence = confidence;
-        sessionData.mediaTitle = candidate.targetSignatureInfo->mediaItem->title();
+        sessionData.matchCount = sessionStats.matchCount;
+        sessionData.confidence = sessionStats.confidence;
+        sessionData.mediaTitle = sessionStats.mediaTitle;
         topSessions.push_back(sessionData);
         
-        // 基于allSessionsHistory_中的该session数据重新生成匹配点
-        auto historyIt = allSessionsHistory_.find(sessionId);
-        if (historyIt != allSessionsHistory_.end()) {
-            for (const auto& matchInfo : historyIt->second) {
-                // 解析hash字符串
-                uint32_t hash = 0;
-                if (matchInfo.hash.find("0x") != std::string::npos) {
-                    std::stringstream ss;
-                    ss << std::hex << matchInfo.hash.substr(matchInfo.hash.find("0x") + 2);
-                    ss >> hash;
-                }
-                
-                // 直接使用DebugMatchInfo中的查询点信息生成查询数据匹配点
-                sessionQueryData.matchedPoints.push_back(
-                    std::make_tuple(matchInfo.queryFrequency, matchInfo.queryTime, hash, sessionIndex)
-                );
-                
-                // 直接使用DebugMatchInfo中的源点信息生成源数据匹配点
-                enhancedSourceData.matchedPoints.push_back(
-                    std::make_tuple(matchInfo.sourceFrequency, matchInfo.targetTime, hash, sessionIndex)
-                );
+        // 基于该session的匹配信息生成可视化点
+        for (const auto& matchInfo : sessionStats.matchInfos) {
+            // 解析hash字符串
+            uint32_t hash = 0;
+            if (matchInfo.hash.find("0x") != std::string::npos) {
+                std::stringstream ss;
+                ss << std::hex << matchInfo.hash.substr(matchInfo.hash.find("0x") + 2);
+                ss >> hash;
             }
+            
+            // 直接使用DebugMatchInfo中的查询点信息生成查询数据匹配点
+            sessionQueryData.matchedPoints.push_back(
+                std::make_tuple(matchInfo.queryFrequency, matchInfo.queryTime, hash, sessionIndex)
+            );
+            
+            // 直接使用DebugMatchInfo中的源点信息生成源数据匹配点
+            enhancedSourceData.matchedPoints.push_back(
+                std::make_tuple(matchInfo.sourceFrequency, matchInfo.targetTime, hash, sessionIndex)
+            );
         }
     }
     
@@ -1072,7 +1133,11 @@ bool SignatureMatcher::saveComparisonData(const VisualizationData& sourceData,
                    Visualizer::saveSessionsData(topSessions, sessionsFilename);
     
     if (success) {
-        std::cout << "Saved comparison visualization data:" << std::endl;
+        std::cout << "Saved comparison visualization data (based on complete session history):" << std::endl;
+        std::cout << "  - Total sessions in history: " << allSessionsHistory_.size() << std::endl;
+        std::cout << "  - Active sessions: " << sessionIdToActiveCandidate.size() << std::endl;
+        std::cout << "  - Expired sessions: " << (allSessionsHistory_.size() - sessionIdToActiveCandidate.size()) << std::endl;
+        std::cout << "  - Top sessions selected: " << sessionsToInclude << std::endl;
         std::cout << "  - Source data: " << sourceFilename << (enhancedSourceData.audioFilePath.empty() ? "" : " (with audio path)") << std::endl;
         std::cout << "  - Query data: " << queryFilename << (sessionQueryData.audioFilePath.empty() ? "" : " (with audio path)") << std::endl;
         std::cout << "  - Sessions data: " << sessionsFilename << std::endl;

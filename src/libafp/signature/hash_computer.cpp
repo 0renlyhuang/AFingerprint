@@ -451,12 +451,12 @@ uint32_t HashComputer::computeTripleFrameHash(
     // [19:10] combo1 (10位)         - 位置10-19  
     //     [19:10] anchor-target1 频率差绝对值 (10位)     - 频率差绝对值 除以 4Hz
     //        异或区域[10:10] anchor-target1的符号位(1位置) - 位置10，如果anchor-target1是负数，则该位置为1，否则为0
-    //        异或区域[14:11] anchor-target1的时间差 (4位) - 位置11-14, 时间差 除以 0.2s
+    //        异或区域[14:11] anchor-target1的时间差 (4位) - 位置11-14, 时间差,最大是0.08*3=0.24s, 除以 0.2s
     //     将符号信息和时间差信息异或叠加到频率差信息的[14:10]上，得到combo1
     // [9:0]  combo2 (10位)         - 位置0-9
     //     [9:0] anchor-target2 频率差绝对值 (10位)     - 频率差绝对值 除以 4Hz
     //        异或区域[0:0] anchor-target2的符号位(1位置) - 位置0，如果anchor-target2是负数，则该位置为1，否则为0
-    //        异或区域[4:1] anchor-target2的时间差 (4位) - 位置1-4, 时间差 除以 0.2s
+    //        异或区域[4:1] anchor-target2的时间差 (4位) - 位置1-4, 时间差, 最大是0.08*3=0.24s, 除以 0.2s
     //     将符号信息和时间差信息异或叠加到频率差信息的[4:0]上，得到combo2
     // 因此需要12+10+10=32位
     
@@ -469,27 +469,24 @@ uint32_t HashComputer::computeTripleFrameHash(
     uint32_t freqDelta1Sign = (freqDelta1 < 0) ? 1 : 0; // 符号位
     
     double timeDelta1 = anchorPeak.timestamp - targetPeak1.timestamp;
-    uint32_t timeDelta1Quantized = static_cast<uint32_t>(std::max(0.0, std::min(15.0, std::abs(timeDelta1) / 0.2))) & 0xF; // 除以0.2s，限制为4位
+    uint32_t timeDelta1Quantized = static_cast<uint32_t>(std::max(0.0, std::min(7.0, std::abs(timeDelta1) / 0.09))) & 0x7; // 除以0.3s，限制为3位
     
     // 构建combo1：将符号位和时间差信息异或到频率差信息的低5位[4:0]
     uint32_t combo1 = freqDelta1Abs;
-    uint32_t timeSignCombo1 = (freqDelta1Sign) | (timeDelta1Quantized << 1); // 符号位(1位) + 时间差(4位) = 5位
+    uint32_t timeSignCombo1 = (freqDelta1Sign) | (timeDelta1Quantized << 1); // 符号位(1位) + 时间差(3位) = 4位
     combo1 ^= timeSignCombo1; // 异或到频率差的低5位
     combo1 &= 0x3FF; // 确保只有10位
     
     // 3. 计算combo2 (anchor-target2的组合)
     int32_t freqDelta2 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak2.frequency);
-    uint32_t freqDelta2Abs = (static_cast<uint32_t>(std::abs(freqDelta2)) / 4) & 0x3FF; // 除以4Hz，限制为10位
+    uint32_t freqDelta2Abs = (static_cast<uint32_t>(std::abs(freqDelta2)) / 47) & 0x3F; // 除以47Hz，限制为6位
     uint32_t freqDelta2Sign = (freqDelta2 < 0) ? 1 : 0; // 符号位
     
     double timeDelta2 = anchorPeak.timestamp - targetPeak2.timestamp;
-    uint32_t timeDelta2Quantized = static_cast<uint32_t>(std::max(0.0, std::min(15.0, std::abs(timeDelta2) / 0.2))) & 0xF; // 除以0.2s，限制为4位
+    uint32_t timeDelta2Quantized = static_cast<uint32_t>(std::max(0.0, std::min(7.0, std::abs(timeDelta2) / 0.06))) & 0x7; // 除以0.3s，限制为3位
     
-    // 构建combo2：将符号位和时间差信息异或到频率差信息的低5位[4:0]
-    uint32_t combo2 = freqDelta2Abs;
-    uint32_t timeSignCombo2 = (freqDelta2Sign) | (timeDelta2Quantized << 1); // 符号位(1位) + 时间差(4位) = 5位
-    combo2 ^= timeSignCombo2; // 异或到频率差的低5位
-    combo2 &= 0x3FF; // 确保只有10位
+    // 构建combo2：将符号位和时间差信息异或到频率差信息的低4位[3:0]
+    uint32_t combo2 = (freqDelta2Abs << 4) | (timeDelta2Quantized << 1) | freqDelta2Sign;
     
     // 4. 组合32位哈希值
     // [31:20] 锚点频率(12位) | [19:10] combo1(10位) | [9:0] combo2(10位)
@@ -497,6 +494,8 @@ uint32_t HashComputer::computeTripleFrameHash(
                    (combo1 << 10) |               // combo1 (10位) - 位置10-19
                    combo2;                        // combo2 (10位) - 位置0-9
     
+    // std::cout << "debugging timeDelta1: " << timeDelta1 << " timeDelta2: " << timeDelta2 << std::endl;
+
     return hash;
 }
 
