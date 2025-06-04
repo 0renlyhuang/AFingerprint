@@ -26,7 +26,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
      auto config = std::unique_ptr<PerformanceConfig>(new PerformanceConfig());
     
     // FFT配置 - 移动端使用较小的窗口以节省内存和计算资源
-    config->fftConfig_.fftSize = 1024;    // 较小的FFT窗口
+    config->fftConfig_.fftSize = 4096;    // 较小的FFT窗口
     config->fftConfig_.hopSize = 441;     // 0.01秒/帧 (44.1kHz采样率下约为441样本)
     
     // 峰值检测配置 - 针对每帧3-5个峰值的要求优化
@@ -77,7 +77,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileGenCon
     auto config = std::unique_ptr<PerformanceConfig>(new PerformanceConfig());
     
     // FFT配置 - 生成模式使用更大的窗口以获得更好的频率分辨率
-    config->fftConfig_.fftSize = 1024;    // 增大FFT窗口提高频率分辨率
+    config->fftConfig_.fftSize = 4096;    // 增大FFT窗口提高频率分辨率
     config->fftConfig_.hopSize = 441;     // 更密集的分析
     
     // 峰值检测配置 - 生成模式优先精度，使用更严格的参数
