@@ -16,6 +16,93 @@ void PCMReader::process(const void* data, size_t size, SampleCallback callback) 
     }
 }
 
+void PCMReader::process2(const uint8_t* src_data, size_t src_bytes_count, 
+        ChannelArray<float*>& dst_buffers, 
+        ChannelArray<size_t>& dst_max_capacitys, 
+        ChannelArray<size_t>& dst_offsets,
+        ChannelArray<size_t>& src_consumed_bytes_counts
+        ){
+    if (format_.layout() == ChannelLayout::Mono) {
+        processMono2(src_data, src_bytes_count, dst_buffers[0], dst_max_capacitys[0], dst_offsets[0], src_consumed_bytes_counts[0]);
+    } else {
+        processStereo2(src_data, src_bytes_count, dst_buffers, dst_max_capacitys, dst_offsets, src_consumed_bytes_counts);
+    }
+}
+
+void PCMReader::processMono2(const uint8_t* src_data, size_t src_bytes_count, 
+        float* dst_buffer, 
+        size_t dst_max_capacity, 
+        size_t dst_offset,
+        size_t& src_consumed_bytes_count
+    ) {
+    const uint8_t* ptr = src_data;
+    size_t frameSize = format_.frameSize();  // 对于单声道，frameSize就是sampleSize
+    
+    // 计算源数据最多能提供多少个frame
+    size_t maxSourceFrames = src_bytes_count / frameSize;
+    
+    // 计算目标缓冲区最多能容纳多少个frame
+    size_t maxDestFrames = dst_max_capacity - dst_offset;
+    
+    // 实际处理的frame数量取两者的最小值
+    size_t framesToProcess = std::min(maxSourceFrames, maxDestFrames);
+    
+    // 处理每个frame
+    for (size_t i = 0; i < framesToProcess; ++i) {
+        // 使用readSample读取并转换样本
+        float sample = readSample(ptr);
+        
+        // 写入目标缓冲区，考虑偏移量
+        dst_buffer[dst_offset + i] = sample;
+        
+        // 移动源数据指针
+        ptr += frameSize;
+    }
+    
+    // 更新消耗的源数据字节数
+    src_consumed_bytes_count += framesToProcess * frameSize;
+}
+
+void PCMReader::processStereo2(const uint8_t* src_data, size_t src_bytes_count, 
+        ChannelArray<float*>& dst_buffers, 
+        ChannelArray<size_t>& dst_max_capacitys, 
+        ChannelArray<size_t>& dst_offsets,
+        ChannelArray<size_t>& src_consumed_bytes_counts) {
+    
+    const uint8_t* ptr = src_data;
+    size_t frameSize = format_.frameSize();        // 立体声一帧包含两个样本
+    size_t sampleSize = format_.sampleSize();      // 单个样本的字节数
+    
+    // 计算源数据最多能提供多少个frame
+    size_t maxSourceFrames = src_bytes_count / frameSize;
+    
+    // 计算左右声道缓冲区分别能容纳多少个样本
+    size_t maxLeftFrames = dst_max_capacitys[0] - dst_offsets[0];
+    size_t maxRightFrames = dst_max_capacitys[1] - dst_offsets[1];
+    
+    // 实际处理的frame数量取三者的最小值
+    size_t framesToProcess = std::min({maxSourceFrames, maxLeftFrames, maxRightFrames});
+    
+    // 处理每个frame（立体声frame包含左右两个样本）
+    for (size_t i = 0; i < framesToProcess; ++i) {
+        // 读取左声道样本
+        float leftSample = readSample(ptr);
+        dst_buffers[0][dst_offsets[0] + i] = leftSample;
+        ptr += sampleSize;
+        
+        // 读取右声道样本
+        float rightSample = readSample(ptr);
+        dst_buffers[1][dst_offsets[1] + i] = rightSample;
+        ptr += sampleSize;
+    }
+    
+    // 更新消耗的源数据字节数（对于立体声，所有通道共享同一个源数据流）
+    size_t totalConsumedBytes = framesToProcess * frameSize;
+    for (size_t i = 0; i < src_consumed_bytes_counts.size(); ++i) {
+        src_consumed_bytes_counts[i] += totalConsumedBytes;
+    }
+}
+
 void PCMReader::processMono(const void* data, size_t size, SampleCallback callback) {
     const uint8_t* ptr = static_cast<const uint8_t*>(data);
     size_t frameSize = format_.frameSize();

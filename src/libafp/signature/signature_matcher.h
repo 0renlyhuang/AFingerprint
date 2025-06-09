@@ -147,13 +147,6 @@ private:
     MatchNotifyCallback matchNotifyCallback_;  // 匹配通知回调
     static size_t nextCandidateId_;     // 下一个候选ID
     
-    // 哈希匹配优化结构
-    struct TargetSignatureInfo {
-        const MediaItem* mediaItem;
-        std::unordered_map<uint32_t, std::vector<double>> hashTimestamps;  // 哈希值到时间戳的映射
-    };
-    std::vector<TargetSignatureInfo> targetSignaturesInfo_;  // 预处理的目标签名信息
-    
 
     struct TargetSignatureInfo2 {
         const MediaItem *mediaItem;

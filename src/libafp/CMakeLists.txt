@@ -5,6 +5,8 @@ project(afp C CXX OBJCXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_definitions(-DENABLED_DIAGNOSE)
+
 # 添加编译优化选项（根据构建类型）
 if(MSVC)
     # MSVC 编译器
