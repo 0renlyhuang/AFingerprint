@@ -57,6 +57,10 @@ bool SignatureGenerator::appendStreamBuffer(const void* buffer, size_t bufferSiz
     return signature_generation_pipeline_->appendStreamBuffer(buffer, bufferSize, startTimestamp);
 }
 
+void SignatureGenerator::flush() {
+    signature_generation_pipeline_->flush();
+}
+
 void SignatureGenerator::onSignaturePointsGenerated(const std::vector<SignaturePoint>& signature_points) {
     signatures_.reserve(signatures_.size() + signature_points.size());
     signatures_.insert(signatures_.end(), signature_points.begin(), signature_points.end());

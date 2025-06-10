@@ -42,7 +42,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     // 动态峰值分配配置 - 移动端
     config->peakDetectionConfig_.minPeaksPerFrame = 5;      // 最少保留3个峰值
     config->peakDetectionConfig_.maxPeaksPerFrameLimit = 15; // 最多保留15个峰值
-    config->peakDetectionConfig_.noiseEstimationWindow = 2.0; // 2秒噪声估计窗口
+    config->peakDetectionConfig_.noiseEstimationWindow = 5.0; // 2秒噪声估计窗口
     config->peakDetectionConfig_.snrThreshold = 6.0f;       // 6dB信噪比阈值
     config->peakDetectionConfig_.energyWeightFactor = 0.8f; // 能量权重60%
     config->peakDetectionConfig_.snrWeightFactor = 0.2f;    // 信噪比权重40%
@@ -55,7 +55,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileConfig
     config->signatureGenerationConfig_.maxDoubleFrameCombinations = 7; // 移动端保留8个最佳组合，平衡性能和准确性
     config->signatureGenerationConfig_.minDoubleFrameScore = 10.0; // 移动端评分阈值，过滤质量较差的组合
     config->signatureGenerationConfig_.maxTripleFrameCombinations = 7; // 移动端保留5个最佳三帧组合，优化性能
-    config->signatureGenerationConfig_.minTripleFrameScore = 15.0; // 移动端三帧评分阈值，过滤低质量组合
+    config->signatureGenerationConfig_.minTripleFrameScore = 20.0; // 移动端三帧评分阈值，过滤低质量组合
     
     // 扩展三帧选取配置 - 移动端
     config->signatureGenerationConfig_.symmetricFrameRange = 2;    // 移动端对称范围2，生成(x-2,x,x+2)到(x-1,x,x+1)
@@ -81,8 +81,8 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileGenCon
     config->fftConfig_.hopSize = 441;     // 更密集的分析
     
     // 峰值检测配置 - 生成模式优先精度，使用更严格的参数
-    config->peakDetectionConfig_.localMaxRange = 4;        // 更大的本地最大值范围
-    config->peakDetectionConfig_.timeMaxRange = 3;         // 更大的时间维度范围
+    config->peakDetectionConfig_.localMaxRange = 5;        // 更大的本地最大值范围
+    config->peakDetectionConfig_.timeMaxRange = 4;         // 更大的时间维度范围
     config->peakDetectionConfig_.minPeakMagnitude = 15.0f;  // 降低阈值以捕获更多细节
     config->peakDetectionConfig_.minFreq = 40;            // 保持最小频率
     config->peakDetectionConfig_.maxFreq = 5000;           // 扩大频率范围
@@ -91,8 +91,8 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileGenCon
     config->peakDetectionConfig_.numFrequencyBands = 8;    // 增加频段数提高精度
     
     // 动态峰值分配配置 - 生成模式保留更多峰值
-    config->peakDetectionConfig_.minPeaksPerFrame = 20;      // 保留更多峰值
-    config->peakDetectionConfig_.maxPeaksPerFrameLimit = 30; // 提高峰值上限
+    config->peakDetectionConfig_.minPeaksPerFrame = 7;      // 保留更多峰值
+    config->peakDetectionConfig_.maxPeaksPerFrameLimit = 18; // 提高峰值上限
     config->peakDetectionConfig_.noiseEstimationWindow = 3.0; // 更长的噪声估计窗口
     config->peakDetectionConfig_.snrThreshold = 4.0f;       // 降低信噪比阈值，保留更多信息
     config->peakDetectionConfig_.energyWeightFactor = 0.8f; // 更注重能量
@@ -105,7 +105,7 @@ std::shared_ptr<IPerformanceConfig> PerformanceConfigFactory::createMobileGenCon
     config->signatureGenerationConfig_.frameDuration = 0.08; // 适中的帧时长
     config->signatureGenerationConfig_.maxDoubleFrameCombinations = 20; // 保留更多双帧组合
     config->signatureGenerationConfig_.minDoubleFrameScore = 5.0; // 降低评分阈值，保留更多组合
-    config->signatureGenerationConfig_.maxTripleFrameCombinations = 50; // 保留更多三帧组合
+    config->signatureGenerationConfig_.maxTripleFrameCombinations = 15; // 保留更多三帧组合
     config->signatureGenerationConfig_.minTripleFrameScore = 15.0; // 降低三帧评分阈值
     
     // 扩展三帧选取配置 - 生成模式使用更大范围

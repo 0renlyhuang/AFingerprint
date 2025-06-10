@@ -23,6 +23,9 @@ public:
                                   size_t bufferSize,
                                   double startTimestamp) = 0;
 
+    // 刷新内部音频数据缓冲区
+    virtual void flush() = 0;
+
     // 获取生成的指纹
     virtual std::vector<SignaturePoint> signature() const = 0;
     

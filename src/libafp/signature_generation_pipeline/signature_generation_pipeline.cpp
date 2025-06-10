@@ -27,6 +27,10 @@ bool SignatureGenerationPipeline::appendStreamBuffer(const void* buffer, size_t 
     return true;
 }
 
+void SignatureGenerationPipeline::flush() {
+    channelSplitPhase_.flush();
+}
+
 void SignatureGenerationPipeline::attachVisualizationConfig(VisualizationConfig* visualization_config) {
     ctx_.visualization_config = visualization_config;
 }

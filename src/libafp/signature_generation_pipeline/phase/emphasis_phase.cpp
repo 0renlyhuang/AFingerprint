@@ -93,4 +93,15 @@ void EmphasisPhase::handleSamples(ChannelArray<float*>& channel_samples, size_t 
     fftPhase_->handleSamples(channel_samples, sample_count, start_timestamp);
 }
 
+void EmphasisPhase::flush(ChannelArray<float*>& channel_samples, size_t sample_count) {
+    for (size_t channel_i = 0; channel_i < ctx_->channel_count; ++channel_i) {
+        float* channel_sample = channel_samples[channel_i];
+        for (size_t i = 0; i < sample_count; ++i) {
+            channel_sample[i] -= 0.95f * channel_sample[i-1];
+        }
+    }
+
+    fftPhase_->flush(channel_samples, sample_count);
+}
+
 } // namespace afp

@@ -18,7 +18,7 @@ public:
 
     void handlePeaks(ChannelArray<std::vector<Peak>>& peaks);
 
-    void flushPeaks();
+    void flush();
 
 private:
     struct WndInfo {

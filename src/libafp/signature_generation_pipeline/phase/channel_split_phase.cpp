@@ -116,4 +116,16 @@ void ChannelSplitPhase::handleAudioData(const void* buffer, size_t bufferSize, d
 #endif
 }
 
+void ChannelSplitPhase::flush() { 
+    if (channelWritePositions_[0] > 0) {
+        const auto sample_count = channelWritePositions_[0];
+        
+        emphasisPhase_->flush(ctx_->channel_samples, sample_count);
+
+        for (size_t i = 0; i < ctx_->format->channels(); ++i) {
+            channelWritePositions_[i] = 0;
+        }
+    }
+}
+
 } // namespace afp

@@ -17,6 +17,8 @@ public:
 
     void handleSamples(ChannelArray<float*>& channel_samples, size_t sample_count, double start_timestamp);
 
+    void flush(ChannelArray<float*>& channel_samples, size_t sample_count);
+
 private:
     SignatureGenerationPipelineCtx* ctx_;
     FftPhase* fftPhase_;

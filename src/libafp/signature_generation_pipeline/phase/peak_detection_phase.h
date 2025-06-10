@@ -39,6 +39,8 @@ public:
 
     void handleShortFrames(ChannelArray<std::vector<FFTResult>>& fft_results);
 
+    void flush();
+
 private:
     void extractPeaks(std::vector<FFTResult>& fft_results, size_t channel_i);
     

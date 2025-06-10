@@ -259,7 +259,8 @@ void SignatureMatcher::processQuerySignature(
                         queryPoint.frequency, 
                         queryPoint.amplitude,
                         sourcePoint->frequency,
-                        sourcePoint->amplitude
+                        sourcePoint->amplitude,
+                        *sourcePoint
                     });
                     candidate.lastMatchTime = queryPoint.timestamp;
                     candidate.isMatchCountChanged = true;
@@ -292,7 +293,8 @@ void SignatureMatcher::processQuerySignature(
                                 queryPoint.frequency, 
                                 queryPoint.amplitude,
                                 sourcePoint->frequency,
-                                sourcePoint->amplitude
+                                sourcePoint->amplitude,
+                                *sourcePoint
                             });
                     }
 
@@ -329,7 +331,8 @@ void SignatureMatcher::processQuerySignature(
                         queryPoint.frequency, 
                         queryPoint.amplitude,
                         sourcePoint->frequency,
-                        sourcePoint->amplitude
+                        sourcePoint->amplitude,
+                        *sourcePoint
                     } },
                     .lastMatchTime = queryPoint.timestamp,
                     .offset = actualOffset,
@@ -356,7 +359,8 @@ void SignatureMatcher::processQuerySignature(
                                 queryPoint.frequency, 
                                 queryPoint.amplitude,
                                 sourcePoint->frequency,
-                                sourcePoint->amplitude
+                                sourcePoint->amplitude,
+                                *sourcePoint
                             });
                     }
                     
@@ -426,7 +430,8 @@ void SignatureMatcher::processQuerySignature(
                                 queryPoint.frequency, 
                                 queryPoint.amplitude,
                                 sourcePoint->frequency,
-                                sourcePoint->amplitude
+                                sourcePoint->amplitude,
+                                *sourcePoint
                             });
                     }
 
@@ -532,12 +537,17 @@ void SignatureMatcher::processQuerySignature(
                 if (candidate.uniqueTimestampCount >= minMatchesUniqueTimestampRequired_) {
                     // 计算平均偏移
                     double averageOffset = candidate.actualOffsetSum / candidate.offsetCount;
+
+                    std::vector<SignaturePoint> matchedPoints;
+                    for (const auto& matchInfo : candidate.matchInfos) {
+                        matchedPoints.push_back(matchInfo.sourcePoint);
+                    }
                     
                     auto matchResult = MatchResult{
                         .mediaItem = candidate.targetSignatureInfo->mediaItem,
                         .offset = averageOffset,  // 使用平均偏移（秒）
                         .confidence = confidence,
-                        .matchedPoints = {},
+                        .matchedPoints = matchedPoints,
                         .matchCount = candidate.matchCount,
                         .uniqueTimestampMatchCount = candidate.uniqueTimestampCount,
                         .id = 0,

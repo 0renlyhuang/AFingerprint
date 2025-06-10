@@ -119,9 +119,8 @@ void LongFrameBuildingPhase::handleChannelPeaks(size_t channel, std::vector<Peak
 
         // 处理峰值超出当前窗口的情况
         while (peak.timestamp >= wnd_info.end_time) {
-            window_slides++;
-            
 #ifdef ENABLED_DIAGNOSE
+            window_slides++;
             std::cout << "[DIAGNOSE-长帧构建] 通道" << channel << "峰值超出窗口(第" 
                       << window_slides << "次滑动):" << std::endl;
             std::cout << "  峰值时间: " << peak.timestamp << "s >= 窗口结束: " << wnd_info.end_time << "s" << std::endl;
@@ -229,7 +228,7 @@ void LongFrameBuildingPhase::consumePeaks(size_t channel) {
     long_frames_[channel].push_back(frame);
 }
 
-void LongFrameBuildingPhase::flushPeaks() {
+void LongFrameBuildingPhase::flush() {
 #ifdef ENABLED_DIAGNOSE
     std::cout << "[DIAGNOSE-长帧构建] 开始清空所有剩余峰值缓冲区" << std::endl;
 #endif
@@ -249,5 +248,12 @@ void LongFrameBuildingPhase::flushPeaks() {
 #ifdef ENABLED_DIAGNOSE
     std::cout << "[DIAGNOSE-长帧构建] 清空完成，总计清空" << total_flushed << "个峰值" << std::endl;
 #endif
+
+    hash_computation_phase_->handleFrame(long_frames_);
+    for (size_t i = 0; i < ctx_->channel_count; i++) {
+        long_frames_[i].clear();
+    }
+
+    hash_computation_phase_->flush();
 }
 }

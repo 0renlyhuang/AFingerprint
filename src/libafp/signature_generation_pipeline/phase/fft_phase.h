@@ -21,7 +21,11 @@ public:
 
     void handleSamples(ChannelArray<float*>& channel_samples, size_t sample_count, double start_timestamp);
 
+    void flush(ChannelArray<float*>& channel_samples, size_t sample_count);
+
 private:
+    void handleSamplesImpl(ChannelArray<float*>& channel_samples, size_t sample_count);
+
     // Process one FFT window from ring buffer
     void processFFTWindow(size_t channel_i, double timestamp);
 private:

@@ -18,6 +18,8 @@ public:
 
     void handleAudioData(const void* buffer, size_t bufferSize, double startTimestamp);
 
+    void flush();
+
 private:
     PCMReader pcmReader_;
     SignatureGenerationPipelineCtx* ctx_;

@@ -19,8 +19,15 @@ public:
 
     void handleFrame(ChannelArray<std::vector<Frame>>& channel_long_frames);
 
+    void flush();
+
 private:
     void consumeFrame(size_t channel);
+
+    // 处理三帧组合的辅助方法（从 consumeFrame 中提取的逻辑）
+    void processTripleFrameCombination(
+        const Frame& frame1, const Frame& frame2, const Frame& frame3,
+        size_t channel, size_t anchor_idx, size_t distance);
 
     uint32_t computeTripleFrameHash(
         const Peak& anchorPeak,

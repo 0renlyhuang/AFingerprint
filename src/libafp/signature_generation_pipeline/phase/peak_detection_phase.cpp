@@ -660,4 +660,111 @@ std::vector<Peak> PeakDetectionPhase::filterPeaksToQuota(
     return filtered_peaks;
 }
 
+void PeakDetectionPhase::flush() {
+    // 用于在音频数据全部输入结束后，刷新本阶段的缓存数据到下一个阶段
+    // 当前fft_results_cache_存储的fft_results_除去前后安全距离2 * peak_config_.timeMaxRange，中间时长大于peek_detection_duration_ * 0.8时，则认为是有价值的缓存，进行峰值检测处理
+
+#ifdef ENABLED_DIAGNOSE
+    std::cout << "[DIAGNOSE-峰值检测] 开始flush处理:" << std::endl;
+#endif
+
+    bool has_peaks = false;
+    size_t total_peaks = 0;
+
+    for (size_t channel_i = 0; channel_i < ctx_->channel_count; ++channel_i) {
+        auto* fftr_ring_buffer = fft_results_cache_[channel_i].get();
+        
+        if (fftr_ring_buffer->size() < 2 * peak_config_.timeMaxRange + 1) {
+#ifdef ENABLED_DIAGNOSE
+            std::cout << "[DIAGNOSE-峰值检测flush] 通道" << channel_i << "缓存数据不足，跳过: " 
+                      << fftr_ring_buffer->size() << " < " << (2 * peak_config_.timeMaxRange + 1) << std::endl;
+#endif
+            continue;
+        }
+
+        // 计算除去前后安全距离后的有效数据时长
+        const int start_idx = peak_config_.timeMaxRange;
+        const int end_idx = fftr_ring_buffer->size() - peak_config_.timeMaxRange;
+        
+        if (end_idx <= start_idx) {
+#ifdef ENABLED_DIAGNOSE
+            std::cout << "[DIAGNOSE-峰值检测flush] 通道" << channel_i << "有效检测区域为空，跳过" << std::endl;
+#endif
+            continue;
+        }
+
+        const double effective_start_time = (*fftr_ring_buffer)[start_idx].timestamp;
+        const double effective_end_time = (*fftr_ring_buffer)[end_idx - 1].timestamp;
+        const double effective_duration = effective_end_time - effective_start_time;
+        const double min_required_duration = peek_detection_duration_ * 0.8;
+
+#ifdef ENABLED_DIAGNOSE
+        std::cout << "[DIAGNOSE-峰值检测flush] 通道" << channel_i << "有效数据评估:" << std::endl;
+        std::cout << "  缓存大小: " << fftr_ring_buffer->size() << std::endl;
+        std::cout << "  检测区域: [" << start_idx << ", " << end_idx << ")" << std::endl;
+        std::cout << "  有效时长: " << effective_duration << "s" << std::endl;
+        std::cout << "  最小要求时长: " << min_required_duration << "s" << std::endl;
+        std::cout << "  时间范围: [" << effective_start_time << "s - " << effective_end_time << "s]" << std::endl;
+#endif
+
+        if (effective_duration < min_required_duration) {
+#ifdef ENABLED_DIAGNOSE
+            std::cout << "[DIAGNOSE-峰值检测flush] 通道" << channel_i << "有效时长不足，跳过处理" << std::endl;
+#endif
+            continue;
+        }
+
+#ifdef ENABLED_DIAGNOSE
+        std::cout << "[DIAGNOSE-峰值检测flush] 通道" << channel_i << "满足处理条件，开始峰值检测" << std::endl;
+#endif
+
+        // 获取所有缓存数据进行峰值检测
+        std::vector<FFTResult> current_results = fftr_ring_buffer->getRange(0, fftr_ring_buffer->size());
+        
+        // 进行峰值检测
+        detectPeaksInWindow(current_results, start_idx, end_idx, channel_i);
+        
+        total_peaks += detected_peaks_[channel_i].size();
+        if (detected_peaks_[channel_i].size() > 0) {
+            has_peaks = true;
+        }
+
+#ifdef ENABLED_DIAGNOSE
+        std::cout << "[DIAGNOSE-峰值检测flush] 通道" << channel_i << "检测完成，峰值数: " 
+                  << detected_peaks_[channel_i].size() << std::endl;
+#endif
+    }
+
+#ifdef ENABLED_DIAGNOSE
+    std::cout << "[DIAGNOSE-峰值检测flush] flush处理完成: 总峰值数=" << total_peaks 
+              << ", 有峰值=" << (has_peaks ? "是" : "否") << std::endl;
+#endif
+
+    // 如果检测到峰值，则通知长帧构建阶段处理峰值
+    if (has_peaks) {
+        longFrameBuildingPhase_->handlePeaks(detected_peaks_);
+
+        // 清空峰值缓存
+        for (size_t channel_i = 0; channel_i < ctx_->channel_count; ++channel_i) {
+            detected_peaks_[channel_i].clear();
+        }
+
+#ifdef ENABLED_DIAGNOSE
+        std::cout << "[DIAGNOSE-峰值检测flush] 峰值已传递给长帧构建阶段并清空缓存" << std::endl;
+#endif
+    }
+
+    // 清理所有缓存数据和状态
+    for (size_t channel_i = 0; channel_i < ctx_->channel_count; ++channel_i) {
+        fft_results_cache_[channel_i]->reset();
+        detection_states_[channel_i].reset();
+    }
+
+#ifdef ENABLED_DIAGNOSE
+    std::cout << "[DIAGNOSE-峰值检测flush] 所有缓存和状态已清理完成" << std::endl;
+#endif
+
+    longFrameBuildingPhase_->flush();
+}
+
 } // namespace afp

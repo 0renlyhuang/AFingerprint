@@ -176,7 +176,9 @@ private:
         uint32_t queryAmplitude;    
         // 源点的完整信息（来自目标签名数据库）
         uint32_t sourceFrequency;   
-        uint32_t sourceAmplitude;   
+        uint32_t sourceAmplitude;
+
+        SignaturePoint sourcePoint;   
     };
     struct MatchingCandidate;
     std::unordered_map<size_t, std::vector<std::pair<size_t, DebugMatchInfo>>> findDuplicateHashes(const std::vector<std::pair<CandidateSessionKey, MatchingCandidate>>& candidates);

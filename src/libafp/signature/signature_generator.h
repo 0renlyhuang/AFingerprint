@@ -77,6 +77,8 @@ public:
                            size_t bufferSize,
                            double startTimestamp) override;
 
+    void flush() override;
+
     std::vector<SignaturePoint> signature() const override;
 
     void resetSignatures() override;

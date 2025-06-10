@@ -31,6 +31,8 @@ public:
                         size_t bufferSize,
                         double startTimestamp);
 
+    void flush();
+
     void attachVisualizationConfig(VisualizationConfig* visualization_config);
 
 private:

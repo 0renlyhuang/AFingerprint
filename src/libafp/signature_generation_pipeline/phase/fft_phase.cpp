@@ -57,6 +57,10 @@ void FftPhase::handleSamples(ChannelArray<float*>& channel_samples, size_t sampl
               << ", 起始时间=" << start_timestamp << "s" << std::endl;
 #endif
 
+    handleSamplesImpl(channel_samples, sample_count);
+}
+
+void FftPhase::handleSamplesImpl(ChannelArray<float*>& channel_samples, size_t sample_count) {
     for (size_t channel_i = 0; channel_i < ctx_->channel_count; ++channel_i) {
         fft_results_[channel_i].clear();
     }
@@ -96,7 +100,6 @@ void FftPhase::handleSamples(ChannelArray<float*>& channel_samples, size_t sampl
 #ifdef ENABLED_DIAGNOSE
                 std::cout << "[DIAGNOSE-FFT] 通道" << channel_i << "ring buffer已满，执行第" 
                           << fft_count_for_channel << "次FFT" << std::endl;
-                std::cout << "  当前时间戳(本次append开始时间戳)=" << start_timestamp << "s" << std::endl;
                 std::cout << "  窗口开始时间戳=" << window_start_timestamp << "s" << std::endl;
                 std::cout << "  窗口长度=" << (static_cast<double>(hop_size_) / ctx_->sample_rate) << "s" << std::endl;
 #endif
@@ -140,6 +143,7 @@ void FftPhase::handleSamples(ChannelArray<float*>& channel_samples, size_t sampl
 
     peakDetectionPhase_->handleShortFrames(fft_results_);
 }
+
 
 void FftPhase::processFFTWindow(size_t channel_i, double timestamp) {
     // 从ring buffer读取数据并应用窗函数
@@ -231,6 +235,12 @@ void FftPhase::processFFTWindow(size_t channel_i, double timestamp) {
     
     // 将FFT结果存储到vector中
     fft_results_[channel_i].push_back(std::move(fftResult));
+}
+
+void FftPhase::flush(ChannelArray<float*>& channel_samples, size_t sample_count) {
+    handleSamplesImpl(channel_samples, sample_count);
+
+    peakDetectionPhase_->flush();
 }
 
 } // namespace afp

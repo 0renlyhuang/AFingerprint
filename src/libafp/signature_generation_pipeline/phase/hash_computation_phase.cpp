@@ -458,5 +458,289 @@ uint32_t HashComputationPhase::computeTripleFrameHash(
     return hash;
 }
 
+void HashComputationPhase::flush() {
+    // 在音频输入完成后，刷新缓存数据，让所有的长帧都参与哈希计算
+    // ring buffer的大小是symmetric_frame_range_ * 2 + 1
+    // 在音频输入完成时，可以预期ring buffer的数据少于symmetric_frame_range_ * 2 + 1
+    // 即使ring buffer的数据少于symmetric_frame_range_ * 2 + 1
+    // 但如果symmetric_frame_range_ > 1, 此时仍旧有可以计算三帧hash的组合
+
+#ifdef ENABLED_DIAGNOSE
+    std::cout << "[DIAGNOSE-哈希计算] 开始flush处理:" << std::endl;
+#endif
+
+    for (size_t channel_i = 0; channel_i < ctx_->channel_count; ++channel_i) {
+        auto& ring_buffer = frame_ring_buffers_[channel_i];
+        
+        if (ring_buffer->size() < 3) {
+#ifdef ENABLED_DIAGNOSE
+            std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel_i << "缓存数据不足，跳过: " 
+                      << ring_buffer->size() << " < 3" << std::endl;
+#endif
+            continue;
+        }
+
+#ifdef ENABLED_DIAGNOSE
+        std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel_i << "处理剩余长帧:" << std::endl;
+        std::cout << "  缓存大小: " << ring_buffer->size() << std::endl;
+        std::cout << "  对称帧范围: " << symmetric_frame_range_ << std::endl;
+        
+        // 输出环形缓冲区中所有帧的信息
+        for (size_t i = 0; i < ring_buffer->size(); i++) {
+            const Frame& frame = (*ring_buffer)[i];
+            std::cout << "  索引" << i << ": 时间戳=" << frame.timestamp 
+                      << "s, 峰值数=" << frame.peaks.size() << std::endl;
+        }
+#endif
+
+        // 处理所有可能的锚点位置
+        // 锚点位置的范围：从 max(distance, 0) 到 min(buffer_size - 1 - distance, buffer_size - 1)
+        // 其中 distance 是我们要尝试的最大距离
+        
+        size_t total_processed_anchors = 0;
+        
+        // 对于每个可能的锚点位置
+        for (size_t anchor_idx = 0; anchor_idx < ring_buffer->size(); ++anchor_idx) {
+            // 计算在这个锚点位置下，能够使用的最大距离
+            size_t max_distance_left = anchor_idx;                    // 向左最大距离
+            size_t max_distance_right = ring_buffer->size() - 1 - anchor_idx; // 向右最大距离
+            size_t max_usable_distance = std::min(max_distance_left, max_distance_right);
+            max_usable_distance = std::min(max_usable_distance, symmetric_frame_range_);
+            
+            if (max_usable_distance == 0) {
+#ifdef ENABLED_DIAGNOSE
+                std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel_i << "锚点" << anchor_idx 
+                          << "无法形成三帧组合，跳过" << std::endl;
+#endif
+                continue;
+            }
+
+#ifdef ENABLED_DIAGNOSE
+            std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel_i << "处理锚点" << anchor_idx 
+                      << ", 最大可用距离=" << max_usable_distance << std::endl;
+#endif
+
+            // 生成对称的三帧组合：从距离1到max_usable_distance
+            for (size_t distance = 1; distance <= max_usable_distance; distance++) {
+                size_t frame1Index = anchor_idx - distance;  // 左侧帧
+                size_t frame2Index = anchor_idx;             // 锚点帧
+                size_t frame3Index = anchor_idx + distance;  // 右侧帧
+
+                const Frame& frame1 = (*ring_buffer)[frame1Index];
+                const Frame& frame2 = (*ring_buffer)[frame2Index]; 
+                const Frame& frame3 = (*ring_buffer)[frame3Index];
+
+#ifdef ENABLED_DIAGNOSE
+                std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel_i << "处理距离=" << distance 
+                          << "的三帧组合，帧索引[" << frame1Index << "," << frame2Index << "," << frame3Index 
+                          << "]，时间戳[" << frame1.timestamp << "s," << frame2.timestamp << "s," 
+                          << frame3.timestamp << "s]" << std::endl;
+#endif
+
+                // 跳过包含空帧的窗口
+                if (frame1.peaks.empty() || frame2.peaks.empty() || frame3.peaks.empty()) {
+#ifdef ENABLED_DIAGNOSE
+                    std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel_i << "锚点" << anchor_idx  
+                              << "，距离" << distance << "，存在空帧，跳过此窗口" << std::endl;
+#endif
+                    continue;
+                }
+
+                // 复用 consumeFrame 中的三帧组合处理逻辑
+                processTripleFrameCombination(frame1, frame2, frame3, channel_i, anchor_idx, distance);
+            }
+            
+            total_processed_anchors++;
+        }
+
+#ifdef ENABLED_DIAGNOSE
+        std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel_i << "处理完成，处理锚点数: " 
+                  << total_processed_anchors << std::endl;
+#endif
+    }
+
+#ifdef ENABLED_DIAGNOSE
+    std::cout << "[DIAGNOSE-哈希计算flush] flush处理完成，本次生成指纹点数: " << signature_points_.size() << std::endl;
+    std::cout << "  已存在组合数: " << existing_triple_frame_combinations_.size() << std::endl;
+#endif
+
+    if (signature_points_.size() > 0) {
+        ctx_->on_signature_points_generated(signature_points_);
+        
+        existing_triple_frame_combinations_.clear();
+        signature_points_.clear();
+    }
+
+    // 清理所有环形缓冲区
+    for (size_t i = 0; i < ctx_->channel_count; i++) {
+        frame_ring_buffers_[i]->reset();
+    }
+
+#ifdef ENABLED_DIAGNOSE
+    std::cout << "[DIAGNOSE-哈希计算flush] 所有缓存已清理完成" << std::endl;
+#endif
+}
+
+// 处理三帧组合的辅助方法（从 consumeFrame 中提取的逻辑）
+void HashComputationPhase::processTripleFrameCombination(
+    const Frame& frame1, const Frame& frame2, const Frame& frame3,
+    size_t channel, size_t anchor_idx, size_t distance) {
+    
+    // 统计不同原因的过滤数量
+    size_t totalPossibleCombinations = 0;
+    size_t filteredByFreqDelta1_min = 0;
+    size_t filteredByFreqDelta1_max = 0;
+    size_t filteredByTimeDelta1 = 0;
+    size_t filteredByFreqDelta2 = 0;
+    size_t filteredByTimeDelta2 = 0;
+    size_t filteredByFreqDeltaSimilarity = 0;
+    size_t filteredByLowScore = 0;
+    size_t validCombinations = 0;
+    size_t acceptedCombinations = 0;
+
+    // 潜在组合总数
+    size_t theoreticalCombinations = frame1.peaks.size() * frame2.peaks.size() * frame3.peaks.size();
+
+#ifdef ENABLED_DIAGNOSE
+    std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel << "锚点" << anchor_idx  << "，距离" << distance << "，"
+              << "理论可能的峰值组合数: " << theoreticalCombinations << " (帧1:"
+              << frame1.peaks.size() << "峰值, 帧2:" << frame2.peaks.size() 
+              << "峰值, 帧3:" << frame3.peaks.size() << "峰值)" << std::endl;
+#endif
+
+    // 收集所有有效的峰值组合并计算评分
+    std::vector<ScoredTripleFrameCombination> validCombinationsVec;
+
+    // 从中间帧选择锚点峰值
+    for (const auto& anchorPeak : frame2.peaks) {
+        // 从第一帧（最旧）和第三帧（最新）中选择目标峰值
+        for (const auto& targetPeak1 : frame1.peaks) {
+            // 计算所有可能的组合数
+            totalPossibleCombinations += frame3.peaks.size();
+            
+            // 计算第一个频率差并检查是否在有效范围内
+            int32_t freqDelta1 = static_cast<int32_t>(anchorPeak.frequency) - static_cast<int32_t>(targetPeak1.frequency);
+            if (std::abs(freqDelta1) < signature_generation_config_.minFreqDelta) {
+                filteredByFreqDelta1_min += frame3.peaks.size();
+                continue; // 跳过频率差太小
+            }
+            if (std::abs(freqDelta1) > signature_generation_config_.maxFreqDelta) {
+                filteredByFreqDelta1_max += frame3.peaks.size();
+                continue; // 跳过频率差太大
+            }
+            
+            // 检查时间差是否在有效范围内
+            double timeDelta1 = anchorPeak.timestamp - targetPeak1.timestamp;
+            if (std::abs(timeDelta1) > signature_generation_config_.maxTimeDelta) {
+                filteredByTimeDelta1 += frame3.peaks.size();
+                continue; // 跳过时间差太大的配对
+            }
+
+            for (const auto& targetPeak2 : frame3.peaks) {
+                // 计算第二个频率差并检查是否在有效范围内
+                int32_t freqDelta2 = static_cast<int32_t>(targetPeak2.frequency) - static_cast<int32_t>(anchorPeak.frequency);
+                if (std::abs(freqDelta2) < signature_generation_config_.minFreqDelta || 
+                    std::abs(freqDelta2) > signature_generation_config_.maxFreqDelta) {
+                    filteredByFreqDelta2++;
+                    continue; // 跳过频率差太小或太大的配对
+                }
+                
+                // 检查时间差是否在有效范围内
+                double timeDelta2 = targetPeak2.timestamp - anchorPeak.timestamp;
+                if (std::abs(timeDelta2) > signature_generation_config_.maxTimeDelta) {
+                    filteredByTimeDelta2++;
+                    continue; // 跳过时间差太大的配对
+                }
+                
+                // 确保频率差之间有足够的差异，避免生成类似的哈希值
+                if (std::abs(freqDelta1 - freqDelta2) < signature_generation_config_.minFreqDelta / 2) {
+                    filteredByFreqDeltaSimilarity++;
+                    continue; // 两个频率差太相似
+                }
+                
+                // 计算评分
+                double score = computeTripleFrameCombinationScore(anchorPeak, targetPeak1, targetPeak2);
+                
+                // 检查评分是否满足最低阈值
+                if (score < signature_generation_config_.minTripleFrameScore) {
+                    filteredByLowScore++;
+                    continue; // 跳过评分过低的组合
+                }
+                
+                // 添加到有效组合列表
+                ScoredTripleFrameCombination combination;
+                combination.anchorPeak = &anchorPeak;
+                combination.targetPeak1 = &targetPeak1;
+                combination.targetPeak2 = &targetPeak2;
+                combination.score = score;
+                
+                validCombinationsVec.push_back(combination);
+                validCombinations++;
+            }
+        }
+    }
+
+    // 按评分排序，保留topN
+    std::sort(validCombinationsVec.begin(), validCombinationsVec.end(), std::greater<ScoredTripleFrameCombination>());
+
+    // 限制保留的组合数量
+    size_t maxCombinations = std::min(validCombinationsVec.size(), signature_generation_config_.maxTripleFrameCombinations);
+    acceptedCombinations = 0;
+
+    // 生成签名点
+    for (size_t i = 0; i < maxCombinations; i++) {
+        const auto& combination = validCombinationsVec[i];
+        const auto& anchorPeak = *combination.anchorPeak;
+        const auto& targetPeak1 = *combination.targetPeak1;
+        const auto& targetPeak2 = *combination.targetPeak2;
+
+        uint32_t hash = computeTripleFrameHash(anchorPeak, targetPeak1, targetPeak2);
+
+        // 创建签名点
+        SignaturePoint signaturePoint;
+        signaturePoint.hash = hash;
+        signaturePoint.timestamp = anchorPeak.timestamp; // 使用锚点峰值的精确时间戳
+        signaturePoint.frequency = anchorPeak.frequency;
+        signaturePoint.amplitude = static_cast<uint32_t>(anchorPeak.magnitude * 1000);
+        
+        // Add to visualization data if enabled
+        if (ctx_->visualization_config->collectVisualizationData_) {
+            ctx_->visualization_config->visualizationData_.fingerprintPoints.emplace_back(
+                signaturePoint.frequency, 
+                signaturePoint.timestamp, 
+                signaturePoint.hash
+            );
+        }
+
+        std::pair<uint32_t, double> unique_key(signaturePoint.hash, signaturePoint.timestamp);
+        if (existing_triple_frame_combinations_.find(unique_key) == existing_triple_frame_combinations_.end()) {
+            existing_triple_frame_combinations_.insert(unique_key);
+            signature_points_.push_back(signaturePoint);
+
+#ifdef ENABLED_DIAGNOSE
+            if (acceptedCombinations < 3) { // 只显示前几个
+                std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel << "生成指纹点" << (acceptedCombinations + 1) 
+                          << ": 哈希=" << std::hex << hash << std::dec 
+                          << ", 时间=" << signaturePoint.timestamp << "s"
+                          << ", 频率=" << signaturePoint.frequency << "Hz"
+                          << ", 评分=" << combination.score << std::endl;
+            }
+#endif
+        }
+
+        acceptedCombinations++;
+    }
+
+    // 输出窗口过滤统计信息
+    if (totalPossibleCombinations > 0) {
+#ifdef ENABLED_DIAGNOSE
+        std::cout << "[DIAGNOSE-哈希计算flush] 通道" << channel << "锚点" << anchor_idx  << "，距离" << distance << "，"
+                  << "总可能组合: " << totalPossibleCombinations 
+                  << ", 有效组合: " << validCombinations
+                  << ", 接受: " << acceptedCombinations 
+                  << " (" << (acceptedCombinations * 100.0 / totalPossibleCombinations) << "%)" << std::endl;
+#endif
+    }
+}
 
 }
